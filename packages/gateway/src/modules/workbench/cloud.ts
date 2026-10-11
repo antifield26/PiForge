@@ -134,17 +134,61 @@ export const cloudRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: { code: "BAD_REQUEST", message: "file too large (max 20MB)" } })
     }
     const db = (app as unknown as WbApp).db
-    const id = randomUUID()
     const safe = safeName(name)
+    const ts = Date.now()
+
+    // version existing file with same name
+    const existing = db
+      .prepare("SELECT id, storage_key, size FROM cloud_files WHERE user_id = ? AND path = ?")
+      .get(auth.userId, safe) as { id: string; storage_key: string; size: number } | undefined
+
+    if (existing) {
+      const vid = randomUUID()
+      db.prepare(
+        "INSERT INTO cloud_file_versions (id, file_id, user_id, size, storage_key, created_at) VALUES (?,?,?,?,?,?)",
+      ).run(vid, existing.id, auth.userId, existing.size, existing.storage_key, ts)
+      await writeFile(join(storageRoot(), existing.storage_key + ".v" + vid.slice(0, 8)), buf)
+      // keep new content in current key
+      await writeFile(join(storageRoot(), existing.storage_key), buf)
+      db.prepare("UPDATE cloud_files SET size = ?, mime = ?, created_at = ? WHERE id = ?").run(
+        buf.length,
+        body?.mime ?? null,
+        ts,
+        existing.id,
+      )
+      return reply.code(201).send({
+        id: existing.id,
+        name: safe,
+        size: buf.length,
+        mime: body?.mime ?? null,
+        createdAt: ts,
+        versioned: true,
+      })
+    }
+
+    const id = randomUUID()
     const key = `${auth.userId}/${id}${extname(safe)}`
     const root = storageRoot()
     await mkdir(join(root, auth.userId), { recursive: true })
     await writeFile(join(root, key), buf)
-    const ts = Date.now()
     db.prepare(
       "INSERT INTO cloud_files (id, user_id, path, size, mime, storage_key, created_at) VALUES (?,?,?,?,?,?,?)",
     ).run(id, auth.userId, safe, buf.length, body?.mime ?? null, key, ts)
     return reply.code(201).send({ id, name: safe, size: buf.length, mime: body?.mime ?? null, createdAt: ts })
+  })
+
+  app.get<{ Params: { id: string } }>("/files/:id/versions", async (req, reply) => {
+    const auth = requireAuth(req)
+    if (!auth) return reply.code(401).send({ error: { code: "UNAUTHORIZED", message: "not logged in" } })
+    const db = (app as unknown as WbApp).db
+    const rows = db
+      .prepare(
+        "SELECT id, size, created_at FROM cloud_file_versions WHERE file_id = ? AND user_id = ? ORDER BY created_at DESC",
+      )
+      .all(req.params.id, auth.userId) as { id: string; size: number; created_at: number }[]
+    return {
+      items: rows.map((r) => ({ id: r.id, size: r.size, createdAt: r.created_at })),
+    }
   })
 
   app.get<{ Params: { id: string } }>("/files/:id", async (req, reply) => {

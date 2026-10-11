@@ -7,6 +7,7 @@ import { authRoutes, ensureAdminUser } from "./modules/auth/routes.js"
 import { consoleRoutes } from "./modules/console/routes.js"
 import { logsRoutes } from "./modules/console/logs.js"
 import { historyRoutes } from "./modules/console/history.js"
+import { perfRoutes } from "./modules/console/perf.js"
 import { agentRoutes, createAgentAdapter } from "./modules/agent/routes.js"
 import { workbenchRoutes } from "./modules/workbench/routes.js"
 import { cloudRoutes } from "./modules/workbench/cloud.js"
@@ -68,6 +69,7 @@ async function main() {
   await app.register(consoleRoutes, { prefix: "/api/v1/console" })
   await app.register(logsRoutes, { prefix: "/api/v1/console" })
   await app.register(historyRoutes, { prefix: "/api/v1/console" })
+  await app.register(perfRoutes, { prefix: "/api/v1/console" })
   await app.register(agentRoutes, { prefix: "/api/v1/agent" })
 
   app.get("/api/v1/health", async () => ({
