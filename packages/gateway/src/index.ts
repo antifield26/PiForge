@@ -1,5 +1,8 @@
 import Fastify from "fastify"
 import cookie from "@fastify/cookie"
+import fastifyStatic from "@fastify/static"
+import { existsSync } from "node:fs"
+import { join, resolve } from "node:path"
 import { authRoutes, ensureAdminUser } from "./modules/auth/routes.js"
 import { consoleRoutes } from "./modules/console/routes.js"
 import { logsRoutes } from "./modules/console/logs.js"
@@ -73,6 +76,30 @@ async function main() {
       synchronous: pragmaInfo(db, "synchronous"),
     },
   }))
+
+  // Serve web SPA (built apps/web/dist)
+  const webDist = resolve(process.env.WEB_DIST || join(process.cwd(), "apps/web/dist"))
+  if (existsSync(join(webDist, "index.html"))) {
+    await app.register(fastifyStatic, {
+      root: webDist,
+      prefix: "/",
+      index: ["index.html"],
+      wildcard: false,
+    })
+    // SPA fallback for non-API routes
+    app.setNotFoundHandler((req, reply) => {
+      if (req.url.startsWith("/api/")) {
+        return reply.code(404).send({ error: { code: "NOT_FOUND", message: "route not found" } })
+      }
+      return reply.sendFile("index.html")
+    })
+  } else {
+    app.get("/", async () => ({
+      ok: true,
+      message: "PiForge API up; web dist not found",
+      webDist,
+    }))
+  }
 
   await app.listen({ host: config.host, port: config.port })
   app.log.info(
