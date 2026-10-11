@@ -86,14 +86,27 @@ export function createHttpAdapter(opts: HttpAdapterOptions): OpenCodeAdapter {
     },
 
     async prompt(id: string, body: PromptReq) {
-      const payload: Record<string, unknown> = {
-        parts: [{ type: "text", text: body.content }],
+      // model/agent are switched via dedicated endpoints, not the prompt payload
+      if (body.model) {
+        const modelRef = body.model.includes("/")
+          ? body.model.split("/")
+          : ["opencode", body.model]
+        await req<void>(`/api/session/${encodeURIComponent(id)}/model`, {
+          method: "POST",
+          body: JSON.stringify({
+            model: { id: modelRef[1] ?? modelRef[0], providerID: modelRef.length > 1 ? modelRef[0] : "opencode" },
+          }),
+        })
       }
-      if (body.model) payload.model = body.model
-      if (body.agent) payload.agent = body.agent
+      if (body.agent) {
+        await req<void>(`/api/session/${encodeURIComponent(id)}/agent`, {
+          method: "POST",
+          body: JSON.stringify({ agent: body.agent }),
+        })
+      }
       await req<void>(`/api/session/${encodeURIComponent(id)}/prompt`, {
         method: "POST",
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ text: body.content }),
       })
     },
 
@@ -193,9 +206,15 @@ interface RawSession {
 
 interface RawMessage {
   id: string
+  type?: string
+  text?: string
+  content?: { type?: string; text?: string }[]
   role?: string
   parts?: { type?: string; text?: string }[]
-  time?: { created?: number }
+  agent?: string
+  time?: { created?: number; completed?: number }
+  finish?: string
+  error?: { message?: string }
 }
 
 interface RawPermission {
@@ -223,13 +242,33 @@ function mapSession(raw: RawSession): AgentSession {
 }
 
 function mapMessage(raw: RawMessage, sessionId: string): AgentMessage {
-  const text = (raw.parts ?? [])
-    .map((p) => (p.type === "text" ? (p.text ?? "") : ""))
-    .join("")
+  let text = ""
+  if (Array.isArray(raw.content) && raw.content.length > 0) {
+    text = raw.content
+      .map((p) => (p.type === "text" ? (p.text ?? "") : ""))
+      .join("")
+      .trim()
+  }
+  if (!text && typeof raw.text === "string" && raw.text) {
+    text = raw.text
+  }
+  if (!text && Array.isArray(raw.parts)) {
+    text = raw.parts
+      .map((p) => (p.type === "text" ? (p.text ?? "") : ""))
+      .join("")
+      .trim()
+  }
+  const type = raw.type ?? raw.role ?? "assistant"
+  const role: AgentMessage["role"] =
+    type === "user"
+      ? "user"
+      : type === "system" || type === "idle" || type === "model-switched"
+        ? "system"
+        : "assistant"
   return {
     id: raw.id,
     sessionId,
-    role: (raw.role as AgentMessage["role"]) ?? "assistant",
+    role,
     content: text,
     createdAt: raw.time?.created ?? 0,
   }
@@ -255,36 +294,47 @@ function parseSseFrame(frame: string): AgentStreamEvent | null {
   if (!dataLine) return null
   try {
     const payload = JSON.parse(dataLine) as {
+      id?: string
       type?: string
       data?: Record<string, unknown>
       created?: number
     }
     const t = eventType || payload.type || ""
+    const d = payload.data ?? {}
+
     if (t === "session.updated" || t === "session.created") {
       return {
         type: "session.update",
-        sessionId: String(payload.data?.id ?? payload.data?.sessionID ?? ""),
-        title: payload.data?.title ? String(payload.data.title) : undefined,
+        sessionId: String(d.id ?? d.sessionID ?? ""),
+        title: d.title ? String(d.title) : undefined,
       }
     }
-    if (t.startsWith("message.") || t.includes("message")) {
+    if (t.startsWith("message.") || t.includes("message.part") || t === "message.updated") {
       return {
         type: "message.update",
-        sessionId: String(payload.data?.sessionID ?? ""),
-        messageId: String(payload.data?.id ?? payload.data?.messageID ?? ""),
-        content: "",
+        sessionId: String(d.sessionID ?? ""),
+        messageId: String(d.messageID ?? d.id ?? ""),
+        content: typeof d.text === "string" ? d.text : "",
         done: t.endsWith("completed") || t.endsWith("updated"),
       }
     }
+    if (t.startsWith("session.step.") || t.startsWith("session.execution.")) {
+      return {
+        type: "message.update",
+        sessionId: String(d.sessionID ?? ""),
+        messageId: String(d.assistantMessageID ?? d.messageID ?? ""),
+        content: t.endsWith("failed") ? String((d.error as { message?: string })?.message ?? "failed") : "",
+        done: t.endsWith("completed") || t.endsWith("failed"),
+      }
+    }
     if (t.includes("permission")) {
-      const p = payload.data ?? {}
       return {
         type: "permission.request",
         request: {
-          id: String(p.id ?? p.requestID ?? ""),
-          sessionId: String(p.sessionID ?? ""),
-          tool: String(p.tool ?? "unknown"),
-          description: String(p.description ?? ""),
+          id: String(d.id ?? d.requestID ?? ""),
+          sessionId: String(d.sessionID ?? ""),
+          tool: String(d.tool ?? "unknown"),
+          description: String(d.description ?? d.message ?? ""),
           createdAt: payload.created ?? Date.now(),
         },
       }

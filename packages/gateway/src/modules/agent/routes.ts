@@ -58,6 +58,33 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
     },
   )
 
+  app.get<{ Params: { id: string } }>("/sessions/:id/messages", async (req, reply) => {
+    if (!requireAuth(req)) return reply.code(401).send({ error: { code: "UNAUTHORIZED", message: "not logged in" } })
+    try {
+      const items = await app.openCode.listMessages(req.params.id)
+      return { items }
+    } catch (e) {
+      return mapErr(reply, e)
+    }
+  })
+
+  app.post<{ Params: { id: string; reqId: string }; Body: { decision?: string } }>(
+    "/sessions/:id/permissions/:reqId/reply",
+    async (req, reply) => {
+      if (!requireAuth(req)) return reply.code(401).send({ error: { code: "UNAUTHORIZED", message: "not logged in" } })
+      const decision = req.body?.decision
+      if (decision !== "allow" && decision !== "deny" && decision !== "always") {
+        return reply.code(400).send({ error: { code: "BAD_REQUEST", message: "decision must be allow|deny|always" } })
+      }
+      try {
+        await app.openCode.replyPermission(req.params.id, req.params.reqId, decision)
+        return { ok: true }
+      } catch (e) {
+        return mapErr(reply, e)
+      }
+    },
+  )
+
   app.get("/events", async (req, reply) => {
     if (!requireAuth(req)) return reply.code(401).send({ error: { code: "UNAUTHORIZED", message: "not logged in" } })
     reply.raw.writeHead(200, {

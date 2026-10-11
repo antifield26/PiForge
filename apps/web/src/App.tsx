@@ -1,3 +1,5 @@
+import { AgentPanel } from "./AgentPanel"
+
 export function App() {
   return (
     <main class="mx-auto max-w-5xl px-6 py-10">
@@ -7,11 +9,12 @@ export function App() {
           Pi 5 个人工作台 · 树莓派控制台 · Agent 平台
         </p>
       </header>
-      <section class="grid gap-4 sm:grid-cols-3">
+      <section class="mb-6 grid gap-4 sm:grid-cols-3">
         <NavCard title="个人工作台" desc="待办 / 笔记 / 书签 / 云盘" />
         <NavCard title="控制台" desc="温度 / 负载 / 服务 / SD" />
         <NavCard title="Agent" desc="OpenCode 会话与任务" />
       </section>
+      <AgentPanel />
     </main>
   )
 }
