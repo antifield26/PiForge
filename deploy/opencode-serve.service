@@ -1,0 +1,21 @@
+[Unit]
+Description=OpenCode v2 server (localhost only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=piwork
+Group=piwork
+ExecStart=/home/piwork/.opencode/bin/opencode serve --hostname 127.0.0.1 --port 4096
+Restart=on-failure
+RestartSec=5
+# API keys live only in OpenCode local config (~/.config/opencode), never here.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ReadWritePaths=/home/piwork/.opencode /home/piwork/.config/opencode /home/piwork/.local/share/opencode
+
+[Install]
+WantedBy=multi-user.target

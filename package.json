@@ -1,0 +1,23 @@
+{
+  "name": "piforge",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Pi 5 personal workbench + Raspberry Pi console with OpenCode v2 agent platform",
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=26"
+  },
+  "scripts": {
+    "build": "npm run build -w @piforge/shared && npm run build -w @piforge/gateway && npm run build -w @piforge/web",
+    "typecheck": "npm run typecheck -w @piforge/shared && npm run typecheck -w @piforge/gateway && npm run typecheck -w @piforge/web",
+    "dev:gateway": "npm run dev -w @piforge/gateway",
+    "dev:web": "npm run dev -w @piforge/web"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.2"
+  }
+}

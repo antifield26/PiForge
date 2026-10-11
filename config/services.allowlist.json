@@ -1,0 +1,24 @@
+{
+  "units": [
+    {
+      "name": "nginx.service",
+      "label": "Nginx",
+      "allow": ["start", "stop", "restart", "status"]
+    },
+    {
+      "name": "cloudflared.service",
+      "label": "Cloudflare Tunnel",
+      "allow": ["status"]
+    },
+    {
+      "name": "wb-gateway.service",
+      "label": "工作台网关",
+      "allow": ["status", "restart"]
+    },
+    {
+      "name": "opencode-serve.service",
+      "label": "OpenCode Server",
+      "allow": ["start", "stop", "restart", "status"]
+    }
+  ]
+}

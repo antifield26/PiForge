@@ -1,0 +1,18 @@
+/* OpenCode v2-aligned tokens (see docs/ARCHITECTURE.md visual notes) */
+@import "tailwindcss";
+
+:root {
+  --pf-blue-600: #3b5cf6;
+  --pf-grey-50: #fafafa;
+  --pf-grey-100: #f2f2f2;
+  --pf-grey-700: #5c5c5c;
+  --pf-grey-1100: #161616;
+  --pf-font-ui: "Inter", system-ui, sans-serif;
+  --pf-font-mono: "JetBrainsMono Nerd Font Mono", "IBM Plex Mono", ui-monospace, monospace;
+}
+
+body {
+  font-family: var(--pf-font-ui);
+  background: var(--pf-grey-50);
+  color: var(--pf-grey-1100);
+}
