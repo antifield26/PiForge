@@ -3,7 +3,7 @@
 > 规则：任务状态仅在本文件维护；完成任务后立即更新。状态：`pending` | `in-progress` | `done` | `blocked`。  
 > 每个任务可在一次工作会话内完成，且验收标准含**实机验证**。
 
-**状态汇总**（最后更新：2026-10-11）：**P0 全部 done**。用户 `antifield`；备份 `D:\PiBackUp`；公网 `cloud.antifield.work`。
+**状态汇总**（最后更新：2026-10-11）：P0 完成；P1.1 done；其余 P1 pending。
 
 ---
 
@@ -49,7 +49,7 @@
 
 | 编号 | 标题 | 里程碑 | 状态 | 验收标准 | 关联 |
 |---|---|---|---|---|---|
-| P1.1 | 待办+笔记 | P1 | pending | CRUD、标签、搜索；实机浏览器操作通过 | ARCHITECTURE §3.1 |
+| P1.1 | 待办+笔记 | P1 | done | CRUD/搜索/标签过滤；本地+实机 API 测试 8/8；WorkbenchPanel | ARCHITECTURE §3.1 |
 | P1.2 | 书签+云盘 | P1 | pending | 书签夹管理；文件上传/列表/下载（本地盘） | ARCHITECTURE §5 |
 | P1.3 | journald 日志+apt 提醒 | P1 | pending | 按白名单服务查日志；apt 更新列表提醒 | RESEARCH §7 |
 | P1.4 | SD 寿命监控 | P1 | pending | 累计/日写入、估算寿命；阈值告警 | RESEARCH §3.1 |

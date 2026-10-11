@@ -1,5 +1,6 @@
 import { AgentPanel } from "./AgentPanel"
 import { ConsolePanel } from "./ConsolePanel"
+import { WorkbenchPanel } from "./WorkbenchPanel"
 
 export function App() {
   return (
@@ -16,6 +17,7 @@ export function App() {
         <NavCard title="Agent" desc="OpenCode 会话与任务" />
       </section>
       <div class="grid gap-4">
+        <WorkbenchPanel />
         <ConsolePanel />
         <AgentPanel />
       </div>
