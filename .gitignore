@@ -48,3 +48,5 @@ release/
 # Local config overrides
 config/gateway.local.toml
 config/services.local.json
+gateway.env
+**/gateway.env

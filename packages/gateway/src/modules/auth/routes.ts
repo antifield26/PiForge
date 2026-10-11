@@ -74,9 +74,15 @@ export function requireAuth(req: FastifyRequest): { userId: string; sessionId: s
 }
 
 export async function ensureAdminUser(db: Db, username: string, password: string): Promise<void> {
-  const existing = db.prepare("SELECT id FROM users WHERE username = ?").get(username)
-  if (existing) return
+  const existing = db.prepare("SELECT id FROM users WHERE username = ?").get(username) as
+    | { id: string }
+    | undefined
   const hash = await hashPassword(password)
+  if (existing) {
+    // rotate password on each start when ADMIN_PASSWORD is provided
+    db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(hash, existing.id)
+    return
+  }
   db.prepare("INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)").run(
     randomUUID(),
     username,

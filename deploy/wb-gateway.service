@@ -5,25 +5,22 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=piwork
-Group=piwork
-WorkingDirectory=/opt/piforge
-ExecStart=/usr/bin/node /opt/piforge/packages/gateway/dist/index.js
+User=antifield
+Group=antifield
+WorkingDirectory=/home/antifield/piforge
+ExecStart=/usr/local/bin/node /home/antifield/piforge/packages/gateway/dist/index.js
 Restart=on-failure
 RestartSec=5
 Environment=NODE_ENV=production
 Environment=HOST=127.0.0.1
 Environment=PORT=8787
 Environment=OPENCODE_URL=http://127.0.0.1:4096
-Environment=DB_PATH=/var/lib/piforge/wb.db
-Environment=SERVICES_ALLOWLIST=/etc/piforge/services.allowlist.json
+Environment=DB_PATH=/home/antifield/piforge/data/wb.db
+Environment=SERVICES_ALLOWLIST=/home/antifield/piforge/config/services.allowlist.json
 # SESSION_SECRET must be provided via systemd drop-in or EnvironmentFile (not in git)
-EnvironmentFile=-/etc/piforge/gateway.env
+EnvironmentFile=-/home/antifield/piforge/gateway.env
 NoNewPrivileges=true
-ProtectSystem=strict
-ProtectHome=true
 PrivateTmp=true
-ReadWritePaths=/var/lib/piforge
 SupplementaryGroups=gpio
 
 [Install]

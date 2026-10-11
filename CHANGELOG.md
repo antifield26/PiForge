@@ -6,6 +6,7 @@
 
 ### Added
 
+- 2026-10-11 · P0.8 部署：`deploy-pi.sh` + systemd（User=antifield）；`opencode-serve` + `wb-gateway` 实机 active；console 实测 49.4°C；allowlist 403 审计；cloudflared ingress → `127.0.0.1:8787`。备份目标 `D:\PiBackUp`（`backup-pull.ps1`）已拉取一份并含 SHA256SUMS。
 - 2026-10-11 · P0.7 备份与恢复演练：`scripts/backup.sh`（WAL-safe 快照 + config + OpenCode 元数据 + SHA256SUMS）；`restore-drill.sh` 校验并打开 wb.db；实机演练通过（users/sessions/audit 完整）。NAS 目标待用户提供。
 - 2026-10-11 · P0.6 systemd 白名单+审计：`controlService` 校验 unit/action，越权 403；`service_audit` 全量记录；实机 `systemctl restart nginx` 成功；本地验证非白名单/越权拒绝。
 - 2026-10-11 · P0.5 控制台只读监控：`/proc`+`vcgencmd` 采集（温度/负载/内存/SD 写入）；5s 采样、5min 批量写 `metrics_points`；`/system`/`/metrics`/`/sd`/`/services`；前端 ConsolePanel；Pi 实测 temp 47.7°C、write 68KB/s。

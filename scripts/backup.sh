@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # PiForge backup: wb.db + config + OpenCode workspace metadata
 # Usage: backup.sh [target_dir]
-# Default target: /home/antifield/backups/piforge (local). Point BACKUP_TARGET at NAS mount when available.
+# Default target: $HOME/backups/piforge on the Pi.
+# Final archive is pulled to Windows D:\PiBackUp via scripts/backup-pull.ps1.
 set -euo pipefail
 
 STAMP=$(date +%Y%m%d-%H%M%S)

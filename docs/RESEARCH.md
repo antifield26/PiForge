@@ -15,7 +15,7 @@
 | CPU | 4 核，Revision `d04170` | Pi 5 8GB；当前频率 2.4 GHz |
 | 内存 | 总 7.9 GiB，可用约 4.8 GiB | 含 zram 2 GiB swap |
 | 系统盘 | `/dev/mmcblk0p2` 59G ext4，已用 27G (48%) | 另有 `/boot/firmware` 512M vfat |
-| 用户 | `antifield` (uid=1000)，组含 sudo/gpio/i2c/spi | `sudo` 为 **NOPASSWD: ALL** |
+| 用户 | `antifield` (uid=1000)，组含 sudo/gpio/i2c/spi | **唯一用户，不新建 piwork**；sudo 为 NOPASSWD: ALL |
 | 温度（空载） | 50.5 °C，`throttled=0x0` | 无过热降频 |
 | 负载（空载） | load average 0.00 / 0.00 / 0.06 | 11h uptime |
 
@@ -210,7 +210,7 @@ T1 mmcblk0p2 sectors_written = 6162800   (2026-10-11 20:15:55)
 | 当前挂载 | **无** NAS 挂载（`/etc/fstab` 仅有系统分区） |
 | 邻居中的 NAS | **未发现明确 NAS 地址**（仅网关与链路本地邻居） |
 
-**结论**：客户端能力齐备，但 **NAS 地址/协议/凭证待用户提供或发现**。备份链路（协议选择、挂载方式、晚间窗口、校验与恢复演练）在 P0 备份任务中实施；**在备份链路验证通过前，不动存储配置**（安全红线）。
+**结论**：客户端能力齐备。**备份目标已定为 Windows 本机 `D:\PiBackUp`**（`scripts/backup-pull.ps1` 从 Pi SSH 拉取），不另建 NAS。Pi 本地 `~/backups/piforge` 作暂存；校验与恢复演练已通过。
 
 **风险**：NAS 不可达或凭证缺失会阻塞「每晚备份」出口标准。缓解：P0 先做本地备份 + 校验脚本，NAS 接入作为独立任务；失败告警走工作台通知 + 日志。
 
@@ -227,11 +227,11 @@ T1 mmcblk0p2 sectors_written = 6162800   (2026-10-11 20:15:55)
 
 **方案评估**：
 
-1. **sudo + 白名单脚本（推荐 P0）**：网关以专用系统用户运行，仅允许 `systemctl start/stop/restart <白名单单元>`；用 sudoers 精确匹配命令（而非 NOPASSWD ALL——现有账户权限过宽，网关不应以 antifield 全权限运行）。
+1. **sudo + 白名单脚本**：网关以 `antifield` 运行（用户决策：唯一用户）；仍仅允许白名单 unit 的 start/stop/restart/status，全量审计。
 2. **polkit 自定义规则**：允许特定 user/group 对指定 unit 调 `manage-units`，无需 sudo；更细粒度，配置稍复杂。
 3. **两者皆审计**：操作写入工作台库 `audit_log`（journald 为 volatile，持久审计不依赖 journald）。
 
-**注意**：当前 `antifield` 是 NOPASSWD ALL，属于高权限桌面账户。P0 应创建 **专用服务用户**（如 `piwork`）运行网关与 OpenCode，避免整机沦陷面扩大。
+**注意**：`antifield` 为唯一用户（用户决策：不新建 piwork）。systemd 服务以 `antifield` 运行；白名单 systemd + 审计仍强制执行以限制控制面。
 
 ---
 
@@ -280,7 +280,7 @@ T1 mmcblk0p2 sectors_written = 6162800   (2026-10-11 20:15:55)
 | 5 | SD 无健康接口 | 写入量+速率+日历寿命估算；告警阈值可配 |
 | 6 | NAS 未就绪 | 先本地备份+校验；NAS 独立任务；失败告警 |
 | 7 | cloudflared 偶发 TLS 超时 | 已自动重试；网关侧做健康检查与状态展示 |
-| 8 | `antifield` NOPASSWD ALL | 网关/OpenCode 改用专用低权限用户；白名单 sudo/polkit |
+| 8 | `antifield` NOPASSWD ALL | 唯一用户决策已接受；白名单 systemd + 审计约束控制面 |
 | 9 | Minecraft 抢内存/IO | 内存预算按共存校准；监控写入与 OpenCode 会话限额 |
 
 ---
@@ -305,7 +305,7 @@ T1 mmcblk0p2 sectors_written = 6162800   (2026-10-11 20:15:55)
 1. ~~`opencode serve` 在 ARM64 实机的 RSS 与 SSE 连通性~~ → **已闭环（P0.3）**：v2.0.26，RSS 175–261 MB，`/api/info`、`/api/event` SSE、会话 CRUD 契约 9/9 通过。
 2. journald `Storage=volatile` 重启后是否确实不落盘。（P0.9）
 3. 空载（停 Minecraft）24h 写入量。（P0.9）
-4. NAS 地址/协议/凭证（需用户或网络发现）。
+4. ~~NAS 地址/协议/凭证~~ → **已定**：Windows `D:\PiBackUp`，`backup-pull.ps1`。
 5. OpenCode permission 在嵌入 Web 场景下 ask 流的交互路径。（P0.4）
 
 ### 11.1 OpenCode 实机 API 实测摘要（2026-10-11）
