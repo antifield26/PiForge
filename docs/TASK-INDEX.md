@@ -3,7 +3,7 @@
 > 规则：任务状态仅在本文件维护；完成任务后立即更新。状态：`pending` | `in-progress` | `done` | `blocked`。  
 > 每个任务可在一次工作会话内完成，且验收标准含**实机验证**。
 
-**状态汇总**（最后更新：2026-10-11）：文档阶段 done；P0.1–P0.2 done；P0.3 起 pending。
+**状态汇总**（最后更新：2026-10-11）：文档阶段 done；P0.1–P0.3 done；P0.4 起 pending。
 
 ---
 
@@ -27,7 +27,7 @@
 |---|---|---|---|---|---|
 | P0.1 | 项目骨架与配置 | P0 | done | `apps/web`、`packages/gateway`、`packages/shared` 可构建；`config/` 示例就位；systemd unit 草稿存在 | ARCHITECTURE §7-10 |
 | P0.2 | SQLite wb.db + 认证 | P0 | done | 实机：登录/登出/会话 TTL；`PRAGMA journal_mode=WAL` 与 `synchronous=NORMAL` 生效；密码哈希非明文；无 Key 入库 | ARCHITECTURE §5-6 |
-| P0.3 | OpenCode serve + 适配器 | P0 | pending | 实机：`opencode serve --hostname 127.0.0.1` 运行；`GET /api/info` 通；SSE `/api/event` 可订阅；契约测试通过；RSS 写入 RESEARCH | RESEARCH §2；ARCHITECTURE §3.2 |
+| P0.3 | OpenCode serve + 适配器 | P0 | done | 实机：`opencode serve --hostname 127.0.0.1` 运行；`GET /api/info` 通；SSE `/api/event` 可订阅；契约测试通过；RSS 写入 RESEARCH | RESEARCH §2；ARCHITECTURE §3.2 |
 | P0.4 | Agent 任务流式进度 | P0 | pending | 实机：外网登录后下发真实编码任务；时间线显示流式输出；权限请求可 allow/deny | ARCHITECTURE §4.2 |
 | P0.5 | 控制台只读监控 | P0 | pending | 实机：温度/负载/内存/SD 写入实时；指标 5–10min 批量落盘；图表可看 | RESEARCH §7；ARCHITECTURE §4.3 |
 | P0.6 | systemd 白名单+审计 | P0 | pending | 实机：白名单外启停 HTTP 403 且写 audit；白名单内 start/stop 成功；专用用户运行 | RESEARCH §6；ARCHITECTURE §3.3 |

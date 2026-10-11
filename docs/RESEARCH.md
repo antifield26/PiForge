@@ -257,7 +257,7 @@ T1 mmcblk0p2 sectors_written = 6162800   (2026-10-11 20:15:55)
 
 | 预算项 | 设计值 | 实测校准 |
 |---|---|---|
-| OpenCode 后端 | 0.5–1 GB | 待 P0 实测 `opencode serve` RSS（预计 <500MB 空载） |
+| OpenCode 后端 | 0.5–1 GB | **已实测**：`opencode serve` 空载 RSS ≈ 175 MB；建会话后 ≈ 261 MB（远低于预算） |
 | 工作台网关+前端 | ~300 MB | Fastify + Solid SSR/静态，目标 ≤300MB |
 | LSP | 0.5–1 GB 按需 | 仅编码会话拉起 |
 | tmpfs | ~500 MB | /tmp 已 4G 上限，需限制工作台子目录 |
@@ -302,11 +302,25 @@ T1 mmcblk0p2 sectors_written = 6162800   (2026-10-11 20:15:55)
 
 ## 11. 待验证项（P0 内闭环）
 
-1. `opencode serve` 在 ARM64 实机的 RSS 与 SSE 连通性（安装官方二进制后实测）。
-2. journald `Storage=volatile` 重启后是否确实不落盘。
-3. 空载（停 Minecraft）24h 写入量。
+1. ~~`opencode serve` 在 ARM64 实机的 RSS 与 SSE 连通性~~ → **已闭环（P0.3）**：v2.0.26，RSS 175–261 MB，`/api/info`、`/api/event` SSE、会话 CRUD 契约 9/9 通过。
+2. journald `Storage=volatile` 重启后是否确实不落盘。（P0.9）
+3. 空载（停 Minecraft）24h 写入量。（P0.9）
 4. NAS 地址/协议/凭证（需用户或网络发现）。
-5. OpenCode permission 在嵌入 Web 场景下 ask 流的交互路径。
+5. OpenCode permission 在嵌入 Web 场景下 ask 流的交互路径。（P0.4）
+
+### 11.1 OpenCode 实机 API 实测摘要（2026-10-11）
+
+| 项 | 结果 |
+|---|---|
+| 安装 | `curl https://opencode.ai/v2/install \| bash` → `~/.opencode/bin/opencode` v2.0.26 |
+| 监听 | `http://127.0.0.1:4096`（仅 localhost） |
+| 认证 | Basic `opencode:<server password>`（启动日志打印一次） |
+| `GET /api/info` | `{version, pid, urls, paths, capabilities.persistentPty}` |
+| `GET /api/location` | `{directory, project:{id, directory, canonical}}` |
+| 会话 | `POST/GET/DELETE /api/session` 外层 `{data: ...}`，删除返回 204 |
+| SSE | `GET /api/event` → `server.connected` / `integration.updated` / `provider.updated` + heartbeat |
+| Agent | 7 个内置 agent（含 build/plan），含 permissions 规则 |
+| RSS | 空载 ~175 MB；建会话后 ~261 MB |
 
 ---
 

@@ -2,7 +2,7 @@ import Fastify from "fastify"
 import cookie from "@fastify/cookie"
 import { authRoutes, ensureAdminUser } from "./modules/auth/routes.js"
 import { consoleRoutes } from "./modules/console/routes.js"
-import { agentRoutes } from "./modules/agent/routes.js"
+import { agentRoutes, createAgentAdapter } from "./modules/agent/routes.js"
 import { workbenchRoutes } from "./modules/workbench/routes.js"
 import { loadConfig } from "./config/index.js"
 import { openDb, pragmaInfo, type Db } from "./db/index.js"
@@ -44,6 +44,11 @@ async function main() {
 
   await app.register(cookie, { secret: config.sessionSecret })
 
+  const openCode = createAgentAdapter({
+    baseUrl: config.openCodeUrl,
+    password: process.env.OPENCODE_PASSWORD ?? "",
+  })
+  app.decorate("openCode", openCode)
   app.decorateRequest("db", { getter: () => db })
 
   await app.register(authRoutes, { prefix: "/api/v1/auth" })
