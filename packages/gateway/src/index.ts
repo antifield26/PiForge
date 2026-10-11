@@ -8,6 +8,10 @@ import { loadConfig } from "./config/index.js"
 import { openDb, pragmaInfo, type Db } from "./db/index.js"
 
 declare module "fastify" {
+  interface FastifyInstance {
+    db: Db
+    openCode: import("./modules/agent/adapter.js").OpenCodeAdapter
+  }
   interface FastifyRequest {
     db: Db
     userId?: string
@@ -49,6 +53,7 @@ async function main() {
     password: process.env.OPENCODE_PASSWORD ?? "",
   })
   app.decorate("openCode", openCode)
+  app.decorate("db", db)
   app.decorateRequest("db", { getter: () => db })
 
   await app.register(authRoutes, { prefix: "/api/v1/auth" })

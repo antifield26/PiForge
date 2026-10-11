@@ -3,12 +3,6 @@ import { createHttpAdapter, OpenCodeHttpError } from "./http-adapter.js"
 import type { OpenCodeAdapter } from "./adapter.js"
 import { requireAuth } from "../auth/routes.js"
 
-declare module "fastify" {
-  interface FastifyInstance {
-    openCode: OpenCodeAdapter
-  }
-}
-
 export const agentRoutes: FastifyPluginAsync = async (app) => {
   app.get("/info", async (req, reply) => {
     if (!requireAuth(req)) return reply.code(401).send({ error: { code: "UNAUTHORIZED", message: "not logged in" } })

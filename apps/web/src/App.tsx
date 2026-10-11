@@ -1,4 +1,5 @@
 import { AgentPanel } from "./AgentPanel"
+import { ConsolePanel } from "./ConsolePanel"
 
 export function App() {
   return (
@@ -14,7 +15,10 @@ export function App() {
         <NavCard title="控制台" desc="温度 / 负载 / 服务 / SD" />
         <NavCard title="Agent" desc="OpenCode 会话与任务" />
       </section>
-      <AgentPanel />
+      <div class="grid gap-4">
+        <ConsolePanel />
+        <AgentPanel />
+      </div>
     </main>
   )
 }
