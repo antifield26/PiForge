@@ -3,7 +3,7 @@ import { requireAuth } from "../auth/routes.js"
 import { queryMetrics, readSdHealth, readSnapshot, recordMetrics } from "./metrics.js"
 import type { MetricKind, ServiceAction, SystemSnapshot } from "@piforge/shared"
 import { loadAllowlist } from "./allowlist.js"
-import { controlService, listAudit } from "./service-control.js"
+import { controlService, listAudit, listServiceStatus } from "./service-control.js"
 import type { Db } from "../../db/index.js"
 
 const FLUSH_MS = 5 * 60 * 1000
@@ -75,10 +75,10 @@ export const consoleRoutes: FastifyPluginAsync = async (app) => {
 
   app.get("/services", async (req, reply) => {
     if (!requireAuth(req)) return reply.code(401).send({ error: { code: "UNAUTHORIZED", message: "not logged in" } })
-    return { items: loadAllowlist().map((u) => ({ unit: u.name, label: u.label, allowedActions: u.allow })) }
+    return { items: listServiceStatus() }
   })
 
-  app.post<{ Params: { unit: string; action: string } }>(
+  app.post<{ Params: { unit: string; action: string }; Body: { confirmToken?: string } }>(
     "/services/:unit/:action",
     async (req, reply) => {
       const auth = requireAuth(req)
@@ -94,9 +94,19 @@ export const consoleRoutes: FastifyPluginAsync = async (app) => {
         action,
         auth.userId,
         req.ip,
+        req.body?.confirmToken,
       )
       if (!result.allowed) {
         return reply.code(403).send({ error: { code: "FORBIDDEN", message: result.result }, auditId: result.auditId })
+      }
+      if (result.requiresConfirm) {
+        return reply.code(202).send({
+          requiresConfirm: true,
+          confirmToken: result.confirmToken,
+          unit,
+          action,
+          message: "confirm to proceed",
+        })
       }
       return result
     },

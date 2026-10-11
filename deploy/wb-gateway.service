@@ -19,7 +19,7 @@ Environment=DB_PATH=/home/antifield/piforge/data/wb.db
 Environment=SERVICES_ALLOWLIST=/home/antifield/piforge/config/services.allowlist.json
 # SESSION_SECRET must be provided via systemd drop-in or EnvironmentFile (not in git)
 EnvironmentFile=-/home/antifield/piforge/gateway.env
-NoNewPrivileges=true
+# NoNewPrivileges cannot be set: gateway runs `sudo systemctl` for allowlisted units.
 PrivateTmp=true
 SupplementaryGroups=gpio
 

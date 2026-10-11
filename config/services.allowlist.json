@@ -3,22 +3,26 @@
     {
       "name": "nginx.service",
       "label": "Nginx",
-      "allow": ["start", "stop", "restart", "status"]
+      "allow": ["start", "stop", "restart", "status"],
+      "confirm": ["stop", "restart"]
     },
     {
       "name": "cloudflared.service",
       "label": "Cloudflare Tunnel",
-      "allow": ["status"]
+      "allow": ["status", "restart"],
+      "confirm": ["restart"]
     },
     {
       "name": "wb-gateway.service",
       "label": "工作台网关",
-      "allow": ["status", "restart"]
+      "allow": ["status", "restart"],
+      "confirm": ["restart"]
     },
     {
       "name": "opencode-serve.service",
       "label": "OpenCode Server",
-      "allow": ["start", "stop", "restart", "status"]
+      "allow": ["start", "stop", "restart", "status"],
+      "confirm": ["stop", "restart"]
     }
   ]
 }

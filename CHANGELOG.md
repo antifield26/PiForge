@@ -6,6 +6,7 @@
 
 ### Added
 
+- 2026-10-11 · P2.1–P2.2：服务危险操作 confirm token 二次确认（ServicesPanel）；监控 summary/CSV 导出；sudo systemctl（移除 NoNewPrivileges）。
 - 2026-10-11 · P1.3–P1.6：日志（白名单 unit + 越权 403）与 apt 更新提醒；SD 寿命估算；Agent 会话列表；备份历史/手动触发；LogsPanel + OpsPanel。
 - 2026-10-11 · P1.2 书签+云盘：bookmarks 夹管理；cloud_files 本地存储（≤20MB base64 上传/下载/删除）；CloudPanel；本地+实机 8/8。
 - 2026-10-11 · P1.1 待办+笔记：todos/notes CRUD、搜索、标签过滤、WorkbenchPanel；本地与实机 API 测试各 8/8。

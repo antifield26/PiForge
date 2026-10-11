@@ -5,6 +5,7 @@ import { CloudPanel } from "./CloudPanel"
 import { LogsPanel } from "./LogsPanel"
 import { OpsPanel } from "./OpsPanel"
 import { LoginGate } from "./LoginGate"
+import { ServicesPanel } from "./ServicesPanel"
 
 export function App() {
   return (
@@ -25,6 +26,7 @@ export function App() {
           <WorkbenchPanel />
           <CloudPanel />
           <ConsolePanel />
+          <ServicesPanel />
           <LogsPanel />
           <OpsPanel />
           <AgentPanel />

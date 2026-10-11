@@ -3,7 +3,7 @@
 > 规则：任务状态仅在本文件维护；完成任务后立即更新。状态：`pending` | `in-progress` | `done` | `blocked`。  
 > 每个任务可在一次工作会话内完成，且验收标准含**实机验证**。
 
-**状态汇总**（最后更新：2026-10-11）：P0 完成；**P1.1–P1.6 done**；P2 pending。
+**状态汇总**（最后更新：2026-10-11）：P0、P1 完成；P2.1–P2.2 done；其余 P2 pending。
 
 ---
 
@@ -62,8 +62,8 @@
 
 | 编号 | 标题 | 里程碑 | 状态 | 验收标准 | 关联 |
 |---|---|---|---|---|---|
-| P2.1 | 权限细化 | P2 | pending | 按用户/单元策略；危险操作二次确认 | ARCHITECTURE §6.3 |
-| P2.2 | 监控历史导出 | P2 | pending | 周/月聚合、CSV 导出、告警通道 | ARCHITECTURE §4.3 |
+| P2.1 | 权限细化 | P2 | done | 危险操作 confirm token 二次确认；实机 nginx restart ok | ARCHITECTURE §6.3 |
+| P2.2 | 监控历史导出 | P2 | done | summary + CSV 导出；实机 599 点 | ARCHITECTURE §4.3 |
 | P2.3 | 云盘增强 | P2 | pending | 缩略图、多版本、NAS 直存可选 | ARCHITECTURE §5 |
 | P2.4 | 只读 PTY | P2 | pending | 可选终端只读；审计完整；默认关闭 | ARCHITECTURE §3.2 |
 | P2.5 | 移动端适配 | P2 | pending | 触控布局可用；PWA manifest | — |
