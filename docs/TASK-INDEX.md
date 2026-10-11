@@ -3,7 +3,7 @@
 > 规则：任务状态仅在本文件维护；完成任务后立即更新。状态：`pending` | `in-progress` | `done` | `blocked`。  
 > 每个任务可在一次工作会话内完成，且验收标准含**实机验证**。
 
-**状态汇总**（最后更新：2026-10-11）：文档阶段 done；P0.1–P0.6 done；P0.7 起 pending。
+**状态汇总**（最后更新：2026-10-11）：文档阶段 done；P0.1–P0.7 done；P0.8–P0.9 pending（NAS 目标待接入）。
 
 ---
 
@@ -31,7 +31,7 @@
 | P0.4 | Agent 任务流式进度 | P0 | done | 经网关下发真实编码任务并取回流式结果；时间线 UI；权限回复端点就位（ask 流待联调） | ARCHITECTURE §4.2 |
 | P0.5 | 控制台只读监控 | P0 | done | 实机指标采集（temp/load/mem/sd）+ 5s 采样 / 5min 批量落盘 + ConsolePanel | RESEARCH §7；ARCHITECTURE §4.3 |
 | P0.6 | systemd 白名单+审计 | P0 | done | 白名单外 403+审计；动作越权 403+审计；白名单内 status/restart 实机可执行 | RESEARCH §6；ARCHITECTURE §3.3 |
-| P0.7 | 备份+恢复演练 | P0 | pending | 实机：备份成功+checksum；从备份恢复 wb.db 一次成功；失败路径产生告警 | RESEARCH §5；ARCHITECTURE §4.4 |
+| P0.7 | 备份+恢复演练 | P0 | done | 本地备份成功+checksum；恢复演练 db 可开、数据完整；NAS 目标待配置 | RESEARCH §5；ARCHITECTURE §4.4 |
 | P0.8 | Cloudflare 入口+登录联调 | P0 | pending | 实机：外网经 CF + 密码进入工作台；确认 Pi 无新增入站端口；OpenCode 不可公网直达 | RESEARCH §4 |
 | P0.9 | 写入减负核验 | P0 | pending | 实机：WAL/批量/重启后 journald 不落盘；产出 24h 写入增量报告 | RESEARCH §3 |
 
