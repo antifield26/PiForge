@@ -1,0 +1,49 @@
+# OpenCode v2 source (research only, not tracked)
+opencode/
+
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build
+dist/
+build/
+.next/
+.output/
+.turbo/
+
+# Env & secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Logs & runtime
+*.log
+logs/
+tmp/
+.cache/
+
+# SQLite (prod data; never commit)
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Deploy artifacts
+release/
+*.tar.gz
+*.zip
+
+# Local config overrides
+config/gateway.local.toml
+config/services.local.json
