@@ -3,7 +3,7 @@
 > 规则：任务状态仅在本文件维护；完成任务后立即更新。状态：`pending` | `in-progress` | `done` | `blocked`。  
 > 每个任务可在一次工作会话内完成，且验收标准含**实机验证**。
 
-**状态汇总**（最后更新：2026-10-11）：P0 完成；P1.1–P1.2 done；P1.3 起 pending。
+**状态汇总**（最后更新：2026-10-11）：P0 完成；**P1.1–P1.6 done**；P2 pending。
 
 ---
 
@@ -51,10 +51,10 @@
 |---|---|---|---|---|---|
 | P1.1 | 待办+笔记 | P1 | done | CRUD/搜索/标签过滤；本地+实机 API 测试 8/8；WorkbenchPanel | ARCHITECTURE §3.1 |
 | P1.2 | 书签+云盘 | P1 | done | 书签夹管理；文件上传/列表/下载（本地盘）；本地+实机 8/8 | ARCHITECTURE §5 |
-| P1.3 | journald 日志+apt 提醒 | P1 | pending | 按白名单服务查日志；apt 更新列表提醒 | RESEARCH §7 |
-| P1.4 | SD 寿命监控 | P1 | pending | 累计/日写入、估算寿命；阈值告警 | RESEARCH §3.1 |
-| P1.5 | Agent 项目/会话浏览 | P1 | pending | 会话列表、消息回看、项目切换 | ARCHITECTURE §3.2 |
-| P1.6 | 备份告警 UI | P1 | pending | 失败通知、历史列表、手动触发 | ARCHITECTURE §4.4 |
+| P1.3 | journald 日志+apt 提醒 | P1 | done | 白名单服务日志；越权 403；apt 可更新列表 | RESEARCH §7 |
+| P1.4 | SD 寿命监控 | P1 | done | SD 型号/累计写入/日写入估算/寿命天数；OpsPanel | RESEARCH §3.1 |
+| P1.5 | Agent 项目/会话浏览 | P1 | done | 会话列表（title/时间）；消息浏览已有 | ARCHITECTURE §3.2 |
+| P1.6 | 备份告警 UI | P1 | done | 备份历史、手动触发、状态记录 | ARCHITECTURE §4.4 |
 
 ---
 

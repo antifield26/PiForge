@@ -2,6 +2,8 @@ import { AgentPanel } from "./AgentPanel"
 import { ConsolePanel } from "./ConsolePanel"
 import { WorkbenchPanel } from "./WorkbenchPanel"
 import { CloudPanel } from "./CloudPanel"
+import { LogsPanel } from "./LogsPanel"
+import { OpsPanel } from "./OpsPanel"
 
 export function App() {
   return (
@@ -21,6 +23,8 @@ export function App() {
         <WorkbenchPanel />
         <CloudPanel />
         <ConsolePanel />
+        <LogsPanel />
+        <OpsPanel />
         <AgentPanel />
       </div>
     </main>

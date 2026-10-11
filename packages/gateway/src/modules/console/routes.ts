@@ -106,4 +106,48 @@ export const consoleRoutes: FastifyPluginAsync = async (app) => {
     if (!requireAuth(req)) return reply.code(401).send({ error: { code: "UNAUTHORIZED", message: "not logged in" } })
     return { items: listAudit((app as ConsoleApp).db) }
   })
+
+  app.get("/backups", async (req, reply) => {
+    if (!requireAuth(req)) return reply.code(401).send({ error: { code: "UNAUTHORIZED", message: "not logged in" } })
+    const db = (app as ConsoleApp).db
+    const items = db
+      .prepare(
+        "SELECT id, started_at, finished_at, status, target, bytes, checksum, message FROM backup_runs ORDER BY id DESC LIMIT 20",
+      )
+      .all()
+    return { items }
+  })
+
+  app.post("/backups/run", async (req, reply) => {
+    const auth = requireAuth(req)
+    if (!auth) return reply.code(401).send({ error: { code: "UNAUTHORIZED", message: "not logged in" } })
+    const db = (app as ConsoleApp).db
+    const started = Date.now()
+    const res = db
+      .prepare("INSERT INTO backup_runs (started_at, status, target) VALUES (?,?,?)")
+      .run(started, "running", "local:/home/antifield/backups/piforge")
+    const id = Number(res.lastInsertRowid)
+    try {
+      const { execFile } = await import("node:child_process")
+      const { promisify } = await import("node:util")
+      const run = promisify(execFile)
+      await run("bash", ["/home/antifield/piforge/scripts/backup.sh"], { timeout: 120_000 })
+      db.prepare("UPDATE backup_runs SET finished_at=?, status=?, message=? WHERE id=?").run(
+        Date.now(),
+        "ok",
+        "backup completed",
+        id,
+      )
+      return reply.code(201).send({ id, status: "ok" })
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      db.prepare("UPDATE backup_runs SET finished_at=?, status=?, message=? WHERE id=?").run(
+        Date.now(),
+        "failed",
+        msg.slice(0, 300),
+        id,
+      )
+      return reply.code(502).send({ id, status: "failed", message: msg.slice(0, 300) })
+    }
+  })
 }
