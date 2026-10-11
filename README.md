@@ -42,11 +42,14 @@ npm run build
 
 # 2. 实机部署（详见 AGENTS.md）
 ssh antifield@169.254.77.10
+# bash /home/antifield/piforge/scripts/deploy-pi.sh
 
 # 3. 访问
-# 公网：Cloudflare 隧道域名（密码登录）
-# 本地：http://127.0.0.1:<gateway-port>
+# 公网：https://cloud.antifield.work （密码登录）
+# 本地：http://127.0.0.1:8787
 ```
+
+备份：Pi 本地 `~/backups/piforge` → Windows `D:\PiBackUp`（`scripts/backup-pull.ps1`）。
 
 P0 完成前请先阅读 `docs/RESEARCH.md` 与 `docs/TASK-INDEX.md`。
 
