@@ -61,6 +61,16 @@ function migrate(db: Db) {
       created_at INTEGER NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS cloud_files (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      path TEXT NOT NULL,
+      size INTEGER NOT NULL,
+      mime TEXT,
+      storage_key TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS metrics_points (
       ts INTEGER NOT NULL,
       kind TEXT NOT NULL,

@@ -4,6 +4,7 @@ import { authRoutes, ensureAdminUser } from "./modules/auth/routes.js"
 import { consoleRoutes } from "./modules/console/routes.js"
 import { agentRoutes, createAgentAdapter } from "./modules/agent/routes.js"
 import { workbenchRoutes } from "./modules/workbench/routes.js"
+import { cloudRoutes } from "./modules/workbench/cloud.js"
 import { loadConfig } from "./config/index.js"
 import { openDb, pragmaInfo, type Db } from "./db/index.js"
 
@@ -58,6 +59,7 @@ async function main() {
 
   await app.register(authRoutes, { prefix: "/api/v1/auth" })
   await app.register(workbenchRoutes, { prefix: "/api/v1" })
+  await app.register(cloudRoutes, { prefix: "/api/v1" })
   await app.register(consoleRoutes, { prefix: "/api/v1/console" })
   await app.register(agentRoutes, { prefix: "/api/v1/agent" })
 

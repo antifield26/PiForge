@@ -1,6 +1,7 @@
 import { AgentPanel } from "./AgentPanel"
 import { ConsolePanel } from "./ConsolePanel"
 import { WorkbenchPanel } from "./WorkbenchPanel"
+import { CloudPanel } from "./CloudPanel"
 
 export function App() {
   return (
@@ -18,6 +19,7 @@ export function App() {
       </section>
       <div class="grid gap-4">
         <WorkbenchPanel />
+        <CloudPanel />
         <ConsolePanel />
         <AgentPanel />
       </div>
