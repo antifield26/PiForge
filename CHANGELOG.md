@@ -6,6 +6,7 @@
 
 ### Added
 
+- 2026-10-11 · P0.6 systemd 白名单+审计：`controlService` 校验 unit/action，越权 403；`service_audit` 全量记录；实机 `systemctl restart nginx` 成功；本地验证非白名单/越权拒绝。
 - 2026-10-11 · P0.5 控制台只读监控：`/proc`+`vcgencmd` 采集（温度/负载/内存/SD 写入）；5s 采样、5min 批量写 `metrics_points`；`/system`/`/metrics`/`/sd`/`/services`；前端 ConsolePanel；Pi 实测 temp 47.7°C、write 68KB/s。
 - 2026-10-11 · P0.4 Agent 任务流式：prompt 切换模型（`Model.Ref`）+ `{text}` 载荷；消息 content 解包；SSE 事件映射；前端 Agent 时间线面板；经网关下发编码任务并取回 `date +%F` 回复。
 - 2026-10-11 · P0.3 OpenCode v2.0.26 实机安装与适配器：`opencode serve` 绑 127.0.0.1:4096；HTTP 适配器（info/session/prompt/messages/permissions/SSE）；契约测试 9/9；RSS 175–261MB 记入 RESEARCH。

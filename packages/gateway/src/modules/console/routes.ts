@@ -1,8 +1,9 @@
 import type { FastifyPluginAsync, FastifyInstance } from "fastify"
 import { requireAuth } from "../auth/routes.js"
 import { queryMetrics, readSdHealth, readSnapshot, recordMetrics } from "./metrics.js"
-import type { MetricKind, SystemSnapshot } from "@piforge/shared"
+import type { MetricKind, ServiceAction, SystemSnapshot } from "@piforge/shared"
 import { loadAllowlist } from "./allowlist.js"
+import { controlService, listAudit } from "./service-control.js"
 import type { Db } from "../../db/index.js"
 
 const FLUSH_MS = 5 * 60 * 1000
@@ -75,5 +76,34 @@ export const consoleRoutes: FastifyPluginAsync = async (app) => {
   app.get("/services", async (req, reply) => {
     if (!requireAuth(req)) return reply.code(401).send({ error: { code: "UNAUTHORIZED", message: "not logged in" } })
     return { items: loadAllowlist().map((u) => ({ unit: u.name, label: u.label, allowedActions: u.allow })) }
+  })
+
+  app.post<{ Params: { unit: string; action: string } }>(
+    "/services/:unit/:action",
+    async (req, reply) => {
+      const auth = requireAuth(req)
+      if (!auth) return reply.code(401).send({ error: { code: "UNAUTHORIZED", message: "not logged in" } })
+      const action = req.params.action as ServiceAction
+      if (!["start", "stop", "restart", "status"].includes(action)) {
+        return reply.code(400).send({ error: { code: "BAD_REQUEST", message: "invalid action" } })
+      }
+      const unit = decodeURIComponent(req.params.unit)
+      const result = await controlService(
+        (app as ConsoleApp).db,
+        unit,
+        action,
+        auth.userId,
+        req.ip,
+      )
+      if (!result.allowed) {
+        return reply.code(403).send({ error: { code: "FORBIDDEN", message: result.result }, auditId: result.auditId })
+      }
+      return result
+    },
+  )
+
+  app.get("/audit", async (req, reply) => {
+    if (!requireAuth(req)) return reply.code(401).send({ error: { code: "UNAUTHORIZED", message: "not logged in" } })
+    return { items: listAudit((app as ConsoleApp).db) }
   })
 }
