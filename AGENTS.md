@@ -89,6 +89,18 @@ ssh antifield@169.254.77.10 '~/piforge/scripts/backup.sh'
 ssh antifield@169.254.77.10 '~/piforge/scripts/restore-drill.sh'
 ```
 
+### 修改管理员 / OpenCode 密码
+
+```powershell
+# 改 ADMIN_PASSWORD 并重启、校验登录
+ssh antifield@169.254.77.10 'bash /home/antifield/piforge/scripts/set-admin-password.sh "你的新密码"'
+
+# 若改了 gateway.env 里的 OPENCODE_PASSWORD（或其它密钥）
+ssh antifield@169.254.77.10 'bash /home/antifield/piforge/scripts/reload-secrets.sh'
+```
+
+**要点**：systemd 的 `EnvironmentFile=` 只在服务**启动**时读取。改完 `gateway.env` 必须 `systemctl restart wb-gateway`（脚本会做）；否则进程仍用旧密码。
+
 ### 回滚
 
 1. `systemctl stop wb-gateway`
