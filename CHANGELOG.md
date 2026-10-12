@@ -85,6 +85,12 @@
 
 ### Removed
 
+### Removed
+
+- 2026-10-13 路 工作区整理：删除根目录遗留日志（err.log/out.log）与本地测试库 data/wb.db*；移除 25 个已被 
+pm test / erify-e2e.mjs 覆盖或一次性调试脚本（test-*、debug-*、oc-probe 系列、reset-admin-pw 等）。保留部署/备份/回滚/密钥/契约测试与公网探测脚本共 20 个 + lib/。
+
+
 - 2026-10-12 · `config/gateway.example.toml`（配置只读 env，文件为死配置）。
 - 2026-10-12 · `agent_tasks` 表（建表后从未读写；启动时若为空自动删除）、`walCheckpoint` 死代码。
 - 2026-10-12 · 6 个重复的 Cloudflare/DNS 一次性脚本迁入 `scripts/legacy/`（含 README 说明），canonical 路径为 `cf-api-dns.sh` + `cf-api-dns.mjs`。
