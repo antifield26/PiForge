@@ -2,7 +2,7 @@ import type { FastifyPluginAsync } from "fastify"
 import { requireAuth } from "../auth/routes.js"
 import { queryMetrics, readSdHealth, readSnapshot, recordMetrics, recordSdHealth } from "./metrics.js"
 import type { MetricKind } from "@piforge/shared"
-import { controlService, listAudit, listServiceStatus } from "./service-control.js"
+import { controlService, listAudit, listAuditUnits, listLoginAudit, listServiceStatus } from "./service-control.js"
 import {
   countUnreadAlerts,
   deliverAlert,
@@ -163,10 +163,81 @@ export const consoleRoutes: FastifyPluginAsync = async (app) => {
     },
   )
 
-  app.get<{ Querystring: { limit?: string } }>("/audit", async (req, reply) => {
-    if (!requireAuth(req)) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
-    return { items: listAudit(app.db, clampInt(req.query.limit, 50, 1, 500)) }
+  app.get<{
+    Querystring: { limit?: string; unit?: string; action?: string; allowed?: string; from?: string; to?: string }
+  }>("/audit", async (req, reply) => {
+    const auth = requireAuth(req)
+    if (!auth) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
+    const allowedRaw = req.query.allowed
+    const allowed = allowedRaw === "0" ? 0 : allowedRaw === "1" ? 1 : undefined
+    return {
+      items: listAudit(app.db, {
+        limit: clampInt(req.query.limit, 50, 1, 500),
+        unit: typeof req.query.unit === "string" && req.query.unit ? req.query.unit : undefined,
+        action: typeof req.query.action === "string" && req.query.action ? req.query.action : undefined,
+        allowed,
+        from: req.query.from ? clampInt(req.query.from, 0, 0, Number.MAX_SAFE_INTEGER) : undefined,
+        to: req.query.to ? clampInt(req.query.to, 0, 0, Number.MAX_SAFE_INTEGER) : undefined,
+      }),
+      units: listAuditUnits(app.db),
+    }
   })
+
+  app.get<{ Querystring: { limit?: string; ok?: string; from?: string; to?: string } }>("/audit/login", async (req, reply) => {
+    const auth = requireAuth(req)
+    if (!auth) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
+    const okRaw = req.query.ok
+    const ok = okRaw === "0" ? 0 : okRaw === "1" ? 1 : undefined
+    return {
+      items: listLoginAudit(app.db, {
+        limit: clampInt(req.query.limit, 50, 1, 500),
+        ok,
+        from: req.query.from ? clampInt(req.query.from, 0, 0, Number.MAX_SAFE_INTEGER) : undefined,
+        to: req.query.to ? clampInt(req.query.to, 0, 0, Number.MAX_SAFE_INTEGER) : undefined,
+      }),
+    }
+  })
+
+  app.get<{ Querystring: { kind?: string; limit?: string; unit?: string; action?: string } }>(
+    "/audit/export",
+    async (req, reply) => {
+      const auth = requireAuth(req)
+      if (!auth) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
+      const kind = req.query.kind === "login" ? "login" : "service"
+      const limit = clampInt(req.query.limit, 500, 1, 5000)
+      const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "")
+      if (kind === "login") {
+        const rows = listLoginAudit(app.db, { limit })
+        const lines = ["id,ts,iso,username,ok,client_ip,user_agent"]
+        for (const r of rows) {
+          lines.push(
+            [r.id, r.ts, new Date(r.ts).toISOString(), r.username, r.ok, r.client_ip ?? "", r.user_agent ?? ""]
+              .map(csvCell)
+              .join(","),
+          )
+        }
+        reply.header("content-type", "text/csv; charset=utf-8")
+        reply.header("content-disposition", `attachment; filename="login-audit-${stamp}.csv"`)
+        return reply.send(lines.join("\n"))
+      }
+      const rows = listAudit(app.db, {
+        limit,
+        unit: typeof req.query.unit === "string" && req.query.unit ? req.query.unit : undefined,
+        action: typeof req.query.action === "string" && req.query.action ? req.query.action : undefined,
+      })
+      const lines = ["id,ts,iso,user_id,unit,action,allowed,result,client_ip"]
+      for (const r of rows) {
+        lines.push(
+          [r.id, r.ts, new Date(r.ts).toISOString(), r.user_id ?? "", r.unit, r.action, r.allowed, r.result ?? "", r.client_ip ?? ""]
+            .map(csvCell)
+            .join(","),
+        )
+      }
+      reply.header("content-type", "text/csv; charset=utf-8")
+      reply.header("content-disposition", `attachment; filename="service-audit-${stamp}.csv"`)
+      return reply.send(lines.join("\n"))
+    },
+  )
 
   app.get("/backups", async (req, reply) => {
     if (!requireAuth(req)) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
@@ -252,4 +323,9 @@ export const consoleRoutes: FastifyPluginAsync = async (app) => {
       return sendError(reply, 400, "BAD_REQUEST", e instanceof Error ? e.message : "invalid thresholds")
     }
   })
+}
+
+function csvCell(value: string | number | null): string {
+  const s = value == null ? "" : String(value)
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
 }

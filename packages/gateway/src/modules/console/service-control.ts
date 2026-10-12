@@ -170,13 +170,46 @@ export async function listServiceStatus(now = Date.now()): Promise<ServiceStatus
   return items
 }
 
-export function listAudit(db: Db, limit = 50) {
-  const capped = Math.min(Math.max(1, Math.trunc(limit)), 500)
-  return db
-    .prepare(
-      "SELECT id, ts, user_id, unit, action, allowed, result, client_ip FROM service_audit ORDER BY id DESC LIMIT ?",
-    )
-    .all(capped) as {
+export function listAudit(
+  db: Db,
+  opts: {
+    limit?: number
+    unit?: string
+    action?: string
+    allowed?: number
+    from?: number
+    to?: number
+  } = {},
+) {
+  const limit = Math.min(Math.max(1, Math.trunc(opts.limit ?? 50)), 500)
+  const where: string[] = []
+  const params: (string | number)[] = []
+  if (opts.unit) {
+    where.push("unit = ?")
+    params.push(opts.unit)
+  }
+  if (opts.action) {
+    where.push("action = ?")
+    params.push(opts.action)
+  }
+  if (opts.allowed === 0 || opts.allowed === 1) {
+    where.push("allowed = ?")
+    params.push(opts.allowed)
+  }
+  if (typeof opts.from === "number") {
+    where.push("ts >= ?")
+    params.push(opts.from)
+  }
+  if (typeof opts.to === "number") {
+    where.push("ts <= ?")
+    params.push(opts.to)
+  }
+  const sql =
+    "SELECT id, ts, user_id, unit, action, allowed, result, client_ip FROM service_audit" +
+    (where.length ? " WHERE " + where.join(" AND ") : "") +
+    " ORDER BY id DESC LIMIT ?"
+  params.push(limit)
+  return db.prepare(sql).all(...params) as {
     id: number
     ts: number
     user_id: string | null
@@ -186,6 +219,45 @@ export function listAudit(db: Db, limit = 50) {
     result: string | null
     client_ip: string | null
   }[]
+}
+
+export function listLoginAudit(
+  db: Db,
+  opts: { limit?: number; ok?: number; from?: number; to?: number } = {},
+) {
+  const limit = Math.min(Math.max(1, Math.trunc(opts.limit ?? 50)), 500)
+  const where: string[] = []
+  const params: (string | number)[] = []
+  if (opts.ok === 0 || opts.ok === 1) {
+    where.push("ok = ?")
+    params.push(opts.ok)
+  }
+  if (typeof opts.from === "number") {
+    where.push("ts >= ?")
+    params.push(opts.from)
+  }
+  if (typeof opts.to === "number") {
+    where.push("ts <= ?")
+    params.push(opts.to)
+  }
+  const sql =
+    "SELECT id, ts, username, ok, client_ip, user_agent FROM login_audit" +
+    (where.length ? " WHERE " + where.join(" AND ") : "") +
+    " ORDER BY id DESC LIMIT ?"
+  params.push(limit)
+  return db.prepare(sql).all(...params) as {
+    id: number
+    ts: number
+    username: string
+    ok: number
+    client_ip: string | null
+    user_agent: string | null
+  }[]
+}
+
+export function listAuditUnits(db: Db): string[] {
+  const rows = db.prepare("SELECT DISTINCT unit FROM service_audit ORDER BY unit").all() as { unit: string }[]
+  return rows.map((r) => r.unit)
 }
 
 function needsConfirm(entry: AllowlistUnit, action: string): boolean {

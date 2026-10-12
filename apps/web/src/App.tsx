@@ -1,6 +1,7 @@
 import { createSignal, onMount } from "solid-js"
 import { AgentPanel } from "./AgentPanel"
 import { AlertsPanel } from "./AlertsPanel"
+import { AuditPanel } from "./AuditPanel"
 import { ConsolePanel } from "./ConsolePanel"
 import { WorkbenchPanel } from "./WorkbenchPanel"
 import { CloudPanel } from "./CloudPanel"
@@ -95,6 +96,7 @@ export function App() {
           <ConsolePanel />
           <ServicesPanel />
           <LogsPanel />
+          <AuditPanel />
           <OpsPanel />
           <AgentPanel />
         </div>

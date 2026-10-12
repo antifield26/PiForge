@@ -605,3 +605,62 @@ test("failed logins are recorded in login_audit", async (t) => {
   const rows = db.prepare("SELECT ok FROM login_audit ORDER BY id DESC LIMIT 1").get()
   assert.equal(rows.ok, 0)
 })
+
+
+// ---------------------------------------------------------------- audit retrieval (P3.4)
+
+test("service audit filter and login audit listing", async (t) => {
+  const { app, cookie, db } = await withApp(t)
+  db.prepare(
+    "INSERT INTO service_audit (ts, user_id, unit, action, allowed, result, client_ip) VALUES (?,?,?,?,?,?,?)",
+  ).run(Date.now(), null, "nginx.service", "restart", 0, "rejected: not in allowlist", "10.0.0.1")
+  db.prepare(
+    "INSERT INTO login_audit (ts, username, ok, client_ip, user_agent) VALUES (?,?,?,?,?)",
+  ).run(Date.now(), "admin", 0, "10.0.0.2", "test-agent")
+
+  const filtered = await app.inject({
+    method: "GET",
+    url: "/api/v1/console/audit?unit=nginx.service&allowed=0",
+    headers: auth(cookie),
+  })
+  assert.equal(filtered.statusCode, 200)
+  assert.ok(filtered.json().items.every((r) => r.unit === "nginx.service" && r.allowed === 0))
+  assert.ok(filtered.json().units.includes("nginx.service"))
+
+  const logins = await app.inject({
+    method: "GET",
+    url: "/api/v1/console/audit/login?ok=0",
+    headers: auth(cookie),
+  })
+  assert.equal(logins.statusCode, 200)
+  assert.ok(logins.json().items.every((r) => r.ok === 0))
+})
+
+test("audit CSV export is capped and annotated", async (t) => {
+  const { app, cookie, db } = await withApp(t)
+  db.prepare(
+    "INSERT INTO service_audit (ts, user_id, unit, action, allowed, result, client_ip) VALUES (?,?,?,?,?,?,?)",
+  ).run(Date.now(), null, "quote,\"unit", "restart", 1, "ok, with comma", "127.0.0.1")
+
+  const res = await app.inject({
+    method: "GET",
+    url: "/api/v1/console/audit/export?kind=service&limit=5",
+    headers: auth(cookie),
+  })
+  assert.equal(res.statusCode, 200)
+  assert.match(res.headers["content-type"] ?? "", /text\/csv/)
+  assert.match(res.headers["content-disposition"] ?? "", /service-audit/)
+  assert.match(res.body, /id,ts,iso,user_id,unit,action,allowed,result,client_ip/)
+  assert.match(res.body, /"quote,""unit"/, "quotes must be escaped in CSV")
+
+  const login = await app.inject({
+    method: "GET",
+    url: "/api/v1/console/audit/export?kind=login",
+    headers: auth(cookie),
+  })
+  assert.equal(login.statusCode, 200)
+  assert.match(login.body, /id,ts,iso,username,ok,client_ip,user_agent/)
+
+  const anon = await app.inject({ method: "GET", url: "/api/v1/console/audit/export" })
+  assert.equal(anon.statusCode, 401)
+})
