@@ -1,6 +1,8 @@
 # P2.6 性能与内存报告
 
 > 2026-10-11 实机 RPI5 · 对照 RESEARCH §8 预算
+> 注（2026-10-12）：下表的数值是当时快照，未重新测量。「SD 累计写入」现改为跨重启持久化统计
+> （`settings.sd_write_accum`），不再随重启归零；`/console/perf` 新增 `bootWriteGb` 与 `uptimeSec`。
 
 | 指标 | 实测 | 预算 | 状态 |
 |---|---|---|---|
@@ -21,4 +23,4 @@
 
 ## 查看方式
 
-登录后请求 `/api/v1/console/perf`，或后续接入 OpsPanel 展示。
+登录后请求 `/api/v1/console/perf`。

@@ -3,7 +3,16 @@
 > 规则：任务状态仅在本文件维护；完成任务后立即更新。状态：`pending` | `in-progress` | `done` | `blocked`。  
 > 每个任务可在一次工作会话内完成，且验收标准含**实机验证**。
 
-**状态汇总**（最后更新：2026-10-11）：P0、P1 完成；P2.1–P2.3、P2.5–P2.6 done；P2.4 PTY 默认关闭/暂缓。
+**状态汇总**（最后更新：2026-10-12）：P0、P1 完成；P2.1–P2.3、P2.5–P2.6 done；P2.4 PTY 默认关闭/暂缓。
+2026-10-12 完成一轮全量缺陷修复（FIX-1），部署布局迁移至 `/opt/piforge` + 双无 sudo 用户，全部实机验证通过。
+
+---
+
+## 维护阶段
+
+| 编号 | 标题 | 里程碑 | 状态 | 验收标准（含实机验证） | 关联 |
+|---|---|---|---|---|---|
+| FIX-1 | 评估缺陷全量修复 | 维护 | done | 本地 `npm run verify` 28/28；实机 `verify-e2e.mjs` 39/39（含 3MB 上传、版本回滚、白名单 403、确认令牌、metrics 零写、SSE 心跳、工作区隔离）；迁移后备份 OK + 演练 PASS；`piforge-oc` 无 sudo、`systemctl show` 无密钥、4096/8787 仅回环 | CHANGELOG 2026-10-12 |
 
 ---
 
@@ -85,6 +94,9 @@
 
 | 编号 | 备注 |
 |---|---|
-| P0.3 | OpenCode 二进制路径待 install 后写入 deploy 文档 |
-| P0.7 | NAS 地址/协议待用户提供；先本地演练 |
-| P0.9 | 依赖 P0.5 的 metrics 缓冲实现 |
+| P0.3 | OpenCode 二进制安装于 `/var/lib/piforge-oc/.opencode/bin/opencode`（实机 2.0.26） |
+| P0.7 | 备份目标：Pi 本地 `/var/lib/piforge/backups/piforge`（每晚 03:15 定时）→ Windows `D:\PiBackUp`；NAS 仍未提供 |
+| P0.9 | 依赖 P0.5 的 metrics 缓冲实现；2026-10-12 起保留期 30 天、`/system` 只读 |
+| P0.4 | 权限审批 UI 于 2026-10-12 补齐（面板内允许/拒绝/始终允许） |
+| P0.2 | 会话表每小时清理过期行；登录限速 IP+用户名 |
+| FIX-1 | 未落地独立评估文档（按用户要求只记 CHANGELOG）；遗留：`antifield` 自身仍保留 NOPASSWD sudo（既有 SSH 即 root 的权衡，未改动） |

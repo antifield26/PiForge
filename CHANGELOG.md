@@ -6,7 +6,10 @@
 
 ### Added
 
-- 2026-10-11 · P2.3/P2.5/P2.6：云盘同名覆盖多版本；PWA manifest + icon；`/console/perf` 与 docs/PERF.md（gateway 99MB / opencode 140MB）。P2.4 只读 PTY 暂不启用。
+- 2026-10-12 · **测试与验证**：新增 `npm test`（`node:test`，28 项：认证/限速/错误契约/上传与版本/白名单与确认令牌/metrics 写入纪律/SD 计数折叠/SSE 帧映射/客户端 IP 信任）与 `npm run verify`（typecheck+test）；新增 `scripts/verify-e2e.mjs`（实机端到端验证：登录、控制台、上传 3MB、版本回滚、白名单 403、确认令牌、metrics 零写、SSE 心跳、工作区隔离）。
+- 2026-10-12 · **夜间备份**：`deploy/piforge-backup.{service,timer}`（03:15，`Persistent=true`，root 执行，可读 `/etc/piforge` 与两个 `/var/lib` 状态目录）；`scripts/backup-record.mjs` 记录 `backup_runs`；`scripts/deploy-pi.sh` + `scripts/rollback-pi.sh`（幂等迁移与单元回滚）；`scripts/gen-sudoers.mjs` 由 allowlist 生成 sudoers；`scripts/lib/env.sh` 统一凭据读取（不 `source` dotenv、凭据不进 argv、临时文件 0600 且退出即清）。
+- 2026-10-12 · **权限模型**：新增两个无 sudo 系统用户 `piforge-gw`（网关）与 `piforge-oc`（OpenCode/Agent）；网关运行于 `/opt/piforge`（root:root，服务用户只读，因 `/home/antifield` 为 0700）；`/etc/sudoers.d/piforge-gw` 由 `config/services.allowlist.json` 生成、`visudo -c` 校验后安装，仅含白名单单元的 start/stop/restart；`opencode-serve.service` 增加 `WorkingDirectory=/var/lib/piforge-oc/workspace`（此前为空 → 项目目录为 `/`）与显式 `permission: ask`（`deploy/opencode-config.json`）。
+- 2026-10-12 · 2026-10-11 · P2.3/P2.5/P2.6：云盘同名覆盖多版本；PWA manifest + icon；`/console/perf` 与 docs/PERF.md（gateway 99MB / opencode 140MB）。P2.4 只读 PTY 暂不启用。
 - 2026-10-11 · P2.1–P2.2：服务危险操作 confirm token 二次确认（ServicesPanel）；监控 summary/CSV 导出；sudo systemctl（移除 NoNewPrivileges）。
 - 2026-10-11 · P1.3–P1.6：日志（白名单 unit + 越权 403）与 apt 更新提醒；SD 寿命估算；Agent 会话列表；备份历史/手动触发；LogsPanel + OpsPanel。
 - 2026-10-11 · P1.2 书签+云盘：bookmarks 夹管理；cloud_files 本地存储（≤20MB base64 上传/下载/删除）；CloudPanel；本地+实机 8/8。
@@ -31,6 +34,43 @@
 - 2026-10-11 · OpenCode v2 源码拉取至 `opencode/`（不跟踪），版本 2.0.26
 - 2026-10-11 · 实机基线记录：log2ram、journald volatile、tmpfs、Node 26.11.1、cloudflared 2026.8.1、SD 写入 ~15 KB/s（含 Minecraft）
 
+### Fixed
+
+- 2026-10-12 · 云盘上传：`POST /api/v1/files` 独立 `bodyLimit`（32MB，二进制 ≤20MB），前端改 8KB 分块 base64。此前 >~122KB 前端 `RangeError`、>~750KB 服务端 413，且失败无任何提示（实测 3MB 上传成功）。
+- 2026-10-12 · 云盘多版本：覆盖前先把**旧内容**写入独立版本文件并记录其 `storage_key`，新增 `GET /files/:id/versions/:vid` 下载，删除文件级联清理版本与磁盘文件，单文件保留 10 份。此前版本文件写的是新内容、旧数据直接丢失（"保留历史版本"名不副实）。
+- 2026-10-12 · 备份链：DB 缺失 → exit 2（不再静默成功）；WAL 安全快照（`sqlite3 .backup`，无 sqlite3 时 `node:sqlite VACUUM INTO`），不再复制活动 db/wal/shm；纳入 `/etc/piforge` 密钥与 OpenCode 元数据，权限 0750/0600，保留 14 份；读不到的部位标记 `partial` 并在控制台显示。
+- 2026-10-12 · 恢复演练：校验 SHA256SUMS + `PRAGMA integrity_check` + 核心表，任一失败非零退出（此前只打印 OK）。
+- 2026-10-12 · 登录限速（IP+用户名滑动窗口，429 + Retry-After）；会话每小时清理过期行；畸形 JSON 由 500 改 400；413/415/5xx 统一为 `{error:{code,message}}` 信封；生产缺密钥启动即失败；确认令牌绑定用户。
+- 2026-10-12 · metrics：`GET /console/system` 不再写库（此前每次请求写 4 行，实测 3 次请求 0→12 行）；保留期 30 天自动清理；`sd_health` 每小时落一行；前端轮询在页面隐藏时暂停。
+- 2026-10-12 · SD 累计写入：`/proc/diskstats` 计数器是「本次开机以来」，现持久化跨重启累计（实测 lifetime 507,900,928 B ≥ boot），寿命估算不再每次重启归零。
+- 2026-10-12 · Agent SSE：`reply.hijack()` + 15s 心跳 + 无名 data 帧（前端 onmessage 可收）+ 单上游连接复用；补 `GET /agent/sessions/:id/permissions`、`POST .../interrupt`、`GET /agent/diff`、`/agent/projects`、`/agent/agents`。
+- 2026-10-12 · 前端：权限审批按钮与会话选择器（刷新后可恢复待批准请求）；全局 401 回登录页 + 退出登录；统一 `api()` 与全量 try/catch；修复日志页不可见（`--pf-grey-200` 未定义）；`crypto.randomUUID` 降级；书签仅允许 http(s)；删除/手动备份加二次确认；`Promise.allSettled`；a11y 与溢出修复。
+- 2026-10-12 · 校验与边界：todos.status 枚举、tags/长度/URL 校验；日志 `since`/`lines` 校验；CSV/JSON 导出限量；`bookmarks` 拒绝 `javascript:`。
+- 2026-10-12 · `backup.sh` 旧布局 OpenCode 路径修正（`/home/antifield` 而非 `~/.opencode`，此前会误报 PARTIAL）；`deploy-pi.sh` bash `local a=1 b=$a` 展开陷阱修正（曾导致部署中断）；`gen-sudoers.mjs` 的 `Cmnd_Alias` 改为先定义后引用（sudoers 自上而下解析）。
+
+### Changed
+
+- 2026-10-12 · **部署布局**：运行时 `/opt/piforge`（root:root，服务用户只读，因 `/home/antifield` 为 0700）；状态 `/var/lib/piforge`（wb.db/cloud/backups）；配置密钥 `/etc/piforge`（0640）；Agent 家目录 `/var/lib/piforge-oc` + 工作区 `workspace/`。
+- 2026-10-12 · `wb-gateway.service` 不再使用 `ConfigurationDirectory`（systemd 会递归 chown `/etc/piforge` 给服务用户），改为部署脚本创建 root:root 0755；新增 `UMask=0077`、`StateDirectoryMode=0750` 与 `ProtectSystem/ProtectHome/ProtectKernel*` 等加固。
+- 2026-10-12 · OpenCode 密码从 systemd `Environment=` 迁移到 `EnvironmentFile`（此前 `systemctl show -p Environment` 任何本地用户可读）；`service.json` 与会话密码同步。
+- 2026-10-12 · 文档回写：ARCHITECTURE（权限模型/schema/接口/unit）、README（备份与快速开始）、AGENTS §5/§7（部署与验证命令、密钥纪律）、TASK-INDEX（新增 FIX-1 与备注）、PERF/WRITE-RELIEF（标注历史数据与新语义）。
+
+### Security
+
+- 2026-10-12 · 网关与 Agent 拆分到两个**无 sudo** 系统用户；`/etc/sudoers.d/piforge-gw` 由 allowlist 生成并经 `visudo -f` 校验，只含白名单单元的 start/stop/restart。
+- 2026-10-12 · Agent 工作区隔离：`WorkingDirectory=/var/lib/piforge-oc/workspace`（此前为空 → 项目目录为 `/`，即整机可读写）；`opencode.json` 显式 `permission: ask`。
+- 2026-10-12 · 经 Cloudflare 的真实客户端 IP 仅在直连为回环时采信 `CF-Connecting-IP`，用于限速与审计（此前审计里全是 127.0.0.1）。
+- 2026-10-12 · 凭据纪律：脚本不再 `source` dotenv、不再把密码放命令行、不再写 `/tmp` 明文；`set-admin-password.sh` 拒绝 argv 密码；`oc-probe.sh` 不再落盘 OpenCode 密码。
+- 2026-10-12 · 修复 `/etc/sudoers.d/010_antifield-nopasswd` 权限 0644 → 0440（此前 `visudo -c` 全量校验失败）。
+- 2026-10-12 · 遗留未改：`antifield` 仍保留 `NOPASSWD: ALL`（人类/运维登录，SSH 密钥即 root 的既有权衡）；运行时进程已不再以该用户执行。
+
+### Removed
+
+- 2026-10-12 · `config/gateway.example.toml`（配置只读 env，文件为死配置）。
+- 2026-10-12 · `agent_tasks` 表（建表后从未读写；启动时若为空自动删除）、`walCheckpoint` 死代码。
+- 2026-10-12 · 6 个重复的 Cloudflare/DNS 一次性脚本迁入 `scripts/legacy/`（含 README 说明），canonical 路径为 `cf-api-dns.sh` + `cf-api-dns.mjs`。
+
 ### Notes
 
-- 业务代码尚未开始；遵循「文档先行」约束。
+- 2026-10-12 · 本日为评估后的一次性全量修复：本地 `npm run verify`（typecheck + 28 项测试）全绿；实机 `scripts/verify-e2e.mjs` 39/39 全绿；迁移后备份 OK 且恢复演练 PASS；服务控制经生成 sudoers 实测可重启白名单单元。按用户要求，评估报告未落地为独立文档，仅记入本 CHANGELOG。
+- 2026-10-11 · 业务代码自本日起开始（P0.1 起每个任务均有对应提交）。

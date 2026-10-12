@@ -20,12 +20,13 @@ flowchart LR
   ADPT --> OC[opencode serve\n127.0.0.1]
   GW --> DB[(wb.db SQLite WAL)]
   GW --> HOST[vcgencmd / proc / systemd]
-  GW --> NAS[NAS 每晚备份]
+  GW --> BK[夜间备份 03:15]
 ```
 
 - **工作台为主体，OpenCode 为子系统**：所有 OpenCode 调用经薄适配器，隔离 v2 API 变动。
-- **零入站端口**；OpenCode 只绑 localhost。
-- **SD 写入减负**：WAL、内存聚合批量落盘、log2ram、journald volatile、tmpfs。
+- **零入站端口**；OpenCode 只绑 localhost，工作区隔离在自己的目录。
+- **最小权限**：网关与 Agent 各跑在无 sudo 的系统用户下（`piforge-gw` / `piforge-oc`），systemd 控制由 allowlist 生成的 sudoers 规则限定。
+- **SD 写入减负**：WAL、内存聚合批量落盘（30 天保留）、log2ram、journald volatile、tmpfs。
 
 详细设计见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 

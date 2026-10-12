@@ -13,8 +13,9 @@
 | zram swap | 2G（先前实测） | `zram0 [SWAP]` |
 | SQLite WAL | **wal** | `PRAGMA journal_mode=wal` |
 | SQLite synchronous | **NORMAL（连接级）** | 网关打开时 `synchronous=NORMAL`；裸新连接默认 2(FULL) 无影响 |
-| 监控批量落盘 | **已实现** | 5s 采样入内存，5min 批量写 `metrics_points`；`/system` 即时落一条 |
-| 备份 | **已演练** | `D:\PiBackUp` + SHA256SUMS + restore-drill 通过 |
+| 监控批量落盘 | **已实现** | 5s 采样入内存，5min 批量写 `metrics_points`（2026-10-12 起 `/system` 只读、不再即时落一条） |
+| 监控保留策略 | **已实现** | `metrics_points` 默认保留 30 天（`METRICS_RETENTION_DAYS`），每次 flush 清理；`sd_health` 每小时一行 |
+| 备份 | **已演练** | `D:\PiBackUp` + SHA256SUMS + restore-drill 通过（2026-10-12 起校验更严格：integrity_check + 核心表，失败即非零退出） |
 
 ## 2. 写入量实测（60s 窗口）
 
