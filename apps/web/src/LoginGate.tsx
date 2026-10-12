@@ -1,13 +1,14 @@
-import { createSignal, Show } from "solid-js"
+import { createSignal, Show, type JSX } from "solid-js"
 import { api, errorText } from "./api"
 
 export function LoginGate(props: {
   authed: boolean | null
   notice: string
   onAuthed: (authed: boolean) => void
-  children: any
+  children: JSX.Element
 }) {
-  const [username, setUsername] = createSignal("admin")
+  // Leave blank: prefilling "admin" helps credential stuffing and user enumeration.
+  const [username, setUsername] = createSignal("")
   const [password, setPassword] = createSignal("")
   const [err, setErr] = createSignal("")
   const [busy, setBusy] = createSignal(false)

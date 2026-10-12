@@ -3,15 +3,23 @@ import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import { requireAuth } from "../auth/routes.js"
 import { loadAllowlist } from "./allowlist.js"
+import { checkHeavy, createHeavyLimiter } from "../../auth/ratelimit.js"
 import { clampInt, sendError } from "../../util/validate.js"
 
 const execFileAsync = promisify(execFile)
 const SINCE_PATTERN = /^(-?\d+[smhdw]|\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2})?)?|[a-z]+( \d+ (hour|day|minute)s? ago)?)$/i
+// journalctl/apt are process-spawning and SD-touching; keep a stolen session from hammering them.
+const heavy = createHeavyLimiter(20, 60_000)
 
 export const logsRoutes: FastifyPluginAsync = async (app) => {
   app.get<{ Querystring: { unit?: string; since?: string; lines?: string } }>("/logs", async (req, reply) => {
     const auth = requireAuth(req)
     if (!auth) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
+    const budget = checkHeavy(heavy, auth.userId)
+    if (!budget.allowed) {
+      reply.header("retry-after", String(budget.retryAfterSec))
+      return sendError(reply, 429, "RATE_LIMITED", `too many log requests, retry in ${budget.retryAfterSec}s`)
+    }
     const unit = req.query.unit?.trim()
     const since = req.query.since?.trim() || "-1h"
     const lines = clampInt(req.query.lines, 100, 1, 500)
@@ -33,14 +41,20 @@ export const logsRoutes: FastifyPluginAsync = async (app) => {
         lines: stdout.split("\n").filter(Boolean),
       }
     } catch (e) {
-      const detail = e instanceof Error ? e.message : String(e)
-      return sendError(reply, 502, "UPSTREAM_ERROR", detail.slice(0, 300))
+      // Do not forward exec error details (they can contain local paths/commands).
+      req.log.warn({ err: e }, "journalctl failed")
+      return sendError(reply, 502, "UPSTREAM_ERROR", "failed to read system logs")
     }
   })
 
   app.get("/apt-check", async (req, reply) => {
     const auth = requireAuth(req)
     if (!auth) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
+    const budget = checkHeavy(heavy, auth.userId)
+    if (!budget.allowed) {
+      reply.header("retry-after", String(budget.retryAfterSec))
+      return sendError(reply, 429, "RATE_LIMITED", `too many requests, retry in ${budget.retryAfterSec}s`)
+    }
     try {
       // read-only: list upgradable packages without applying
       const { stdout } = await execFileAsync("apt", ["list", "--upgradable"], {
@@ -59,8 +73,8 @@ export const logsRoutes: FastifyPluginAsync = async (app) => {
         raw: stdout.split("\n").slice(0, 200),
       }
     } catch (e) {
-      const detail = e instanceof Error ? e.message : String(e)
-      return sendError(reply, 502, "UPSTREAM_ERROR", detail.slice(0, 300))
+      req.log.warn({ err: e }, "apt list failed")
+      return sendError(reply, 502, "UPSTREAM_ERROR", "failed to check package updates")
     }
   })
 }

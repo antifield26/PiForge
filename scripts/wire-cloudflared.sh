@@ -1,5 +1,11 @@
 #!/bin/bash
 # Install the cloudflared ingress config (backup the old one) and restart the tunnel.
+#
+# Security note (AGENTS red line 1 is still satisfied: zero inbound ports, public
+# only via Cloudflare Tunnel). This file also publishes a SECOND public service,
+# mc.antifield.work -> tcp://localhost:25565 (Minecraft), which is outside the
+# PiForge workbench surface. That exposure is accepted by the operator; it is
+# documented here so a later security review can see it was deliberate.
 set -euo pipefail
 
 CONFIG=/etc/cloudflared/config.yml

@@ -115,7 +115,11 @@ Write-Step "Pi-side checksums OK"
 # 3. Transfer
 # ---------------------------------------------------------------------------
 Write-Step "packing on the Pi (root reads the root-only backup tree)"
-$null = Invoke-Pi -Command "sudo tar -C '$latest' -czf '$remoteArchive' . && sudo chmod 0644 '$remoteArchive'"
+# The archive contains gateway.env / opencode.env (plaintext secrets). Keep it 0600
+# and owned by the SSH user so no other local account can read it in /tmp; 0644
+# would hand the whole key set to every local user for the scp window.
+$sshUser = ($PiHost -split '@')[0]
+$null = Invoke-Pi -Command "sudo tar -C '$latest' -czf '$remoteArchive' . && sudo chown '$sshUser':'$sshUser' '$remoteArchive' && sudo chmod 0600 '$remoteArchive'"
 try {
   Write-Step "copying $(Split-Path $remoteArchive -Leaf) -> $localArchive"
   scp @sshOptions "${PiHost}:${remoteArchive}" $localArchive

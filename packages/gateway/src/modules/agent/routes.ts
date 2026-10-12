@@ -2,9 +2,12 @@ import type { FastifyPluginAsync } from "fastify"
 import { createHttpAdapter, OpenCodeHttpError } from "./http-adapter.js"
 import type { OpenCodeAdapter } from "./adapter.js"
 import { requireAuth } from "../auth/routes.js"
+import { checkHeavy, createHeavyLimiter } from "../../auth/ratelimit.js"
 import { sendError } from "../../util/validate.js"
 
 const HEARTBEAT_MS = 15_000
+// Prompting launches model work and can spawn tools; keep a stolen session bounded.
+const heavy = createHeavyLimiter(15, 60_000)
 
 export const agentRoutes: FastifyPluginAsync = async (app) => {
   app.get("/info", async (req, reply) => {
@@ -12,7 +15,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
     try {
       return await app.openCode.info()
     } catch (e) {
-      return mapErr(reply, e)
+      return mapErr(reply, req, e)
     }
   })
 
@@ -21,7 +24,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
     try {
       return { items: await app.openCode.listProjects() }
     } catch (e) {
-      return mapErr(reply, e)
+      return mapErr(reply, req, e)
     }
   })
 
@@ -30,7 +33,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
     try {
       return { items: await app.openCode.listAgents() }
     } catch (e) {
-      return mapErr(reply, e)
+      return mapErr(reply, req, e)
     }
   })
 
@@ -39,7 +42,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
     try {
       return { items: await app.openCode.listSessions() }
     } catch (e) {
-      return mapErr(reply, e)
+      return mapErr(reply, req, e)
     }
   })
 
@@ -48,14 +51,20 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
     try {
       return reply.code(201).send(await app.openCode.createSession(req.body?.title))
     } catch (e) {
-      return mapErr(reply, e)
+      return mapErr(reply, req, e)
     }
   })
 
   app.post<{ Params: { id: string }; Body: { content?: string; model?: string; agent?: string } }>(
     "/sessions/:id/prompt",
     async (req, reply) => {
-      if (!requireAuth(req)) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
+      const auth = requireAuth(req)
+      if (!auth) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
+      const budget = checkHeavy(heavy, auth.userId)
+      if (!budget.allowed) {
+        reply.header("retry-after", String(budget.retryAfterSec))
+        return sendError(reply, 429, "RATE_LIMITED", `too many prompts, retry in ${budget.retryAfterSec}s`)
+      }
       const content = req.body?.content
       if (typeof content !== "string" || !content.trim()) {
         return sendError(reply, 400, "BAD_REQUEST", "content required")
@@ -68,7 +77,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
         })
         return reply.code(202).send({ ok: true })
       } catch (e) {
-        return mapErr(reply, e)
+        return mapErr(reply, req, e)
       }
     },
   )
@@ -79,7 +88,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
       await app.openCode.interrupt(req.params.id)
       return { ok: true }
     } catch (e) {
-      return mapErr(reply, e)
+      return mapErr(reply, req, e)
     }
   })
 
@@ -88,7 +97,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
     try {
       return { items: await app.openCode.listMessages(req.params.id) }
     } catch (e) {
-      return mapErr(reply, e)
+      return mapErr(reply, req, e)
     }
   })
 
@@ -99,7 +108,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
       try {
         return await app.openCode.getDiff(req.params.id, { from: req.query.from, to: req.query.to })
       } catch (e) {
-        return mapErr(reply, e)
+        return mapErr(reply, req, e)
       }
     },
   )
@@ -109,7 +118,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
     try {
       return { items: await app.openCode.listPermissionRequests(req.params.id) }
     } catch (e) {
-      return mapErr(reply, e)
+      return mapErr(reply, req, e)
     }
   })
 
@@ -125,7 +134,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
         await app.openCode.replyPermission(req.params.id, req.params.reqId, decision)
         return { ok: true }
       } catch (e) {
-        return mapErr(reply, e)
+        return mapErr(reply, req, e)
       }
     },
   )
@@ -141,6 +150,10 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
       "cache-control": "no-cache, no-transform",
       connection: "keep-alive",
       "x-accel-buffering": "no",
+      // SSE bypasses the onSend hook (hijack), so set the security headers here too.
+      "x-content-type-options": "nosniff",
+      "referrer-policy": "no-referrer",
+      "x-frame-options": "DENY",
     })
     reply.raw.write("retry: 3000\n\n")
 
@@ -181,10 +194,15 @@ export function createAgentAdapter(opts: {
   return createHttpAdapter(opts)
 }
 
-function mapErr(reply: import("fastify").FastifyReply, e: unknown) {
+function mapErr(reply: import("fastify").FastifyReply, req: import("fastify").FastifyRequest, e: unknown) {
+  // Never forward the upstream body: OpenCodeHttpError.message embeds up to 200 chars of
+  // the OpenCode response, which can contain internals the caller should not see.
+  // The detail is logged server-side; the client gets a stable, generic message.
+  req.log.warn({ err: e }, "opencode upstream call failed")
   if (e instanceof OpenCodeHttpError) {
     const code = e.status === 404 ? "NOT_FOUND" : e.status === 401 ? "UPSTREAM_UNAUTHORIZED" : "UPSTREAM_ERROR"
-    return sendError(reply, e.status === 401 ? 502 : e.status, code, e.message)
+    const status = e.status === 401 ? 502 : e.status === 404 ? 404 : 502
+    return sendError(reply, status, code, "OpenCode upstream request failed")
   }
-  return sendError(reply, 502, "UPSTREAM_ERROR", e instanceof Error ? e.message : String(e))
+  return sendError(reply, 502, "UPSTREAM_ERROR", "OpenCode upstream request failed")
 }

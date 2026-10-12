@@ -35,10 +35,13 @@ export type ServiceAction = "start" | "stop" | "restart" | "status"
 export interface AuditEntry {
   id: number
   ts: number
+  user_id: string | null
   unit: string
-  action: ServiceAction
-  allowed: boolean
-  result: string
+  action: string
+  /** 0 = rejected, 1 = allowed (matches service_audit.allowed) */
+  allowed: number
+  result: string | null
+  client_ip: string | null
 }
 
 export interface SdHealth {

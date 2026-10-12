@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 import { writeFile, readdir } from "node:fs/promises"
 import { join } from "node:path"
 import { ensureAdminUser } from "../dist/modules/auth/routes.js"
+import { setServiceExec } from "../dist/modules/console/service-control.js"
 import { base64Of, cleanup, login, startApp, stubAdapter, tempDir } from "./helpers.mjs"
 
 const PASSWORD = "test-password-123"
@@ -17,6 +18,10 @@ const ALLOWLIST = {
 async function withApp(t, options = {}) {
   const dir = await tempDir()
   await writeFile(join(dir, "services.allowlist.json"), JSON.stringify(ALLOWLIST), "utf8")
+  // Never touch real systemd from unit tests: stub the exec used by service-control.
+  // A test that needs failure can override again after this.
+  setServiceExec(async () => ({ stdout: "active\n" }))
+  t.after(() => setServiceExec(null))
   const built = await startApp(dir, options)
   await ensureAdminUser(built.db, "admin", PASSWORD)
   t.after(async () => {
@@ -269,6 +274,38 @@ test("dangerous service actions need a confirm token bound to the caller", async
   })
   assert.equal(accepted.statusCode, 200, accepted.body)
   assert.notEqual(accepted.json().requiresConfirm, true)
+
+  // One-time: the same confirm token must not unlock a second run.
+  const replay = await app.inject({
+    method: "POST",
+    url: "/api/v1/console/services/nginx.service/restart",
+    headers: auth(cookie),
+    payload: { confirmToken: token },
+  })
+  assert.equal(replay.statusCode, 202, "a consumed confirm token must not be replayed")
+})
+
+test("service control reports a failed systemctl as 502, not a fake 200", async (t) => {
+  const { app, cookie } = await withApp(t)
+  setServiceExec(async () => {
+    throw new Error("Command failed: sudo systemctl restart nginx.service")
+  })
+  const first = await app.inject({
+    method: "POST",
+    url: "/api/v1/console/services/nginx.service/restart",
+    headers: auth(cookie),
+    payload: {},
+  })
+  assert.equal(first.statusCode, 202)
+  const token = first.json().confirmToken
+  const failed = await app.inject({
+    method: "POST",
+    url: "/api/v1/console/services/nginx.service/restart",
+    headers: auth(cookie),
+    payload: { confirmToken: token },
+  })
+  assert.equal(failed.statusCode, 502, "an authorized but failed systemctl must not look like success")
+  assert.equal(failed.json().error.code, "SERVICE_CONTROL_FAILED")
 })
 
 // ---------------------------------------------------------------- metrics writes
@@ -357,4 +394,55 @@ test("static SPA fallback is not served for unknown api routes", async (t) => {
   const res = await app.inject({ method: "GET", url: "/api/v1/nope" })
   assert.equal(res.statusCode, 404)
   assert.equal(res.json().error.code, "NOT_FOUND")
+})
+
+
+// ---------------------------------------------------------------- CSRF & type safety
+
+test("cross-site writes are rejected by the Origin check", async (t) => {
+  const { app, cookie } = await withApp(t)
+  const res = await app.inject({
+    method: "POST",
+    url: "/api/v1/todos",
+    headers: { ...auth(cookie), origin: "https://evil.example", host: "127.0.0.1:8787" },
+    payload: { title: "x" },
+  })
+  assert.equal(res.statusCode, 403)
+  assert.equal(res.json().error.code, "FORBIDDEN")
+})
+
+test("same-origin writes are accepted", async (t) => {
+  const { app, cookie } = await withApp(t)
+  const res = await app.inject({
+    method: "POST",
+    url: "/api/v1/todos",
+    headers: { ...auth(cookie), origin: "http://127.0.0.1:8787", host: "127.0.0.1:8787" },
+    payload: { title: "ok" },
+  })
+  assert.equal(res.statusCode, 201)
+})
+
+test("non-string login fields are a 400, not a TypeError 500", async (t) => {
+  const { app } = await withApp(t)
+  for (const payload of [
+    { username: 123, password: "x" },
+    { username: { a: 1 }, password: "x" },
+    { username: "admin" },
+  ]) {
+    const res = await app.inject({ method: "POST", url: "/api/v1/auth/login", payload })
+    assert.equal(res.statusCode, 400, JSON.stringify(payload))
+    assert.equal(res.json().error.code, "BAD_REQUEST")
+  }
+})
+
+test("non-string confirmToken is treated as missing, not a 500", async (t) => {
+  const { app, cookie } = await withApp(t)
+  const res = await app.inject({
+    method: "POST",
+    url: "/api/v1/console/services/nginx.service/restart",
+    headers: auth(cookie),
+    payload: { confirmToken: 12345 },
+  })
+  assert.equal(res.statusCode, 202)
+  assert.ok(res.json().confirmToken)
 })

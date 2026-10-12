@@ -163,7 +163,43 @@ log "directories ready: $GW_HOME (piforge-gw, 0750/0600), $OC_HOME + workspace (
 # 3. Data migration (/home/antifield/piforge/data -> /var/lib/piforge)
 # ---------------------------------------------------------------------------
 if [[ -f "$LEGACY_DATA/wb.db" && ! -f "$GW_HOME/wb.db" ]]; then
-  log "legacy database found at $LEGACY_DATA/wb.db — migrating to $GW_HOME"
+  log "legacy database found at $LEGACY_DATA/wb.db — proving the backup chain before migration"
+  # AGENTS red line 4: relocating storage is only allowed after a verifiable backup exists.
+  # A one-shot safety snapshot (db + wal/shm + cloud) is written next to the new backup
+  # root and checked (sha256 + PRAGMA integrity_check) before any mv runs.
+  as_root install -d -m 0750 -o root -g root "$GW_HOME/backups/piforge"
+  SAFETY_DIR="$GW_HOME/backups/piforge/pre-migration-$STAMP"
+  as_root install -d -m 0750 -o root -g root "$SAFETY_DIR"
+  for suffix in "" "-wal" "-shm"; do
+    if [[ -f "$LEGACY_DATA/wb.db$suffix" ]]; then
+      as_root cp -a "$LEGACY_DATA/wb.db$suffix" "$SAFETY_DIR/wb.db$suffix"
+    fi
+  done
+  if [[ -d "$LEGACY_DATA/cloud" ]]; then
+    as_root cp -a "$LEGACY_DATA/cloud" "$SAFETY_DIR/cloud"
+  fi
+  make_tmp
+  ( cd "$SAFETY_DIR" && as_root find . -type f -print0 | as_root xargs -0 sha256sum >"$TMP_LAST" )
+  as_root mv "$TMP_LAST" "$SAFETY_DIR/SHA256SUMS"
+  as_root chmod 0600 "$SAFETY_DIR/SHA256SUMS"
+  if ! ( cd "$SAFETY_DIR" && as_root sha256sum -c SHA256SUMS >/dev/null 2>&1 ); then
+    die "pre-migration safety backup checksum failed at $SAFETY_DIR — refusing to migrate"
+  fi
+  if ! as_root node -e '
+    const { DatabaseSync } = require("node:sqlite")
+    const db = new DatabaseSync(process.argv[1], { readOnly: true })
+    const row = db.prepare("PRAGMA integrity_check").get()
+    const text = Object.values(row ?? {})[0]
+    db.close()
+    if (text !== "ok") {
+      process.stderr.write(`integrity_check: ${text}\n`)
+      process.exit(1)
+    }
+  ' "$SAFETY_DIR/wb.db"; then
+    die "pre-migration integrity_check failed on $SAFETY_DIR/wb.db — refusing to migrate"
+  fi
+  log "safety backup verified at $SAFETY_DIR (sha256 + integrity_check) — proceeding with migration"
+
   # Never move a database out from under a running gateway.
   as_root systemctl stop wb-gateway.service 2>/dev/null || true
   for suffix in "" "-wal" "-shm"; do
@@ -183,7 +219,7 @@ if [[ -f "$LEGACY_DATA/wb.db" && ! -f "$GW_HOME/wb.db" ]]; then
   fi
   as_root chown -R "$GW_USER:$GW_USER" "$GW_HOME"
   MIGRATED=1
-  log "data migration done (owner $GW_USER:$GW_USER)"
+  log "data migration done (owner $GW_USER:$GW_USER); safety copy remains at $SAFETY_DIR"
 elif [[ -f "$GW_HOME/wb.db" ]]; then
   log "database already at $GW_HOME/wb.db — no migration"
 else
@@ -245,7 +281,8 @@ if [[ -n "$generated" ]]; then
   log "generated new secret(s):$generated (values never printed)"
   if [[ "$generated" == *ADMIN_PASSWORD* ]]; then
     log "WARN: the admin password was generated — set a known one with:"
-    log "      bash $RUNTIME/scripts/set-admin-password.sh 'your-new-password'"
+    log "      bash $RUNTIME/scripts/set-admin-password.sh"
+    log "      (prompts for the password; or PIFORGE_ADMIN_PASSWORD=… — never as argv)"
   fi
 fi
 
@@ -281,8 +318,8 @@ if [[ ! -e "$CONF/backup.env" ]]; then
 fi
 
 if [[ -f "$LEGACY_ENV" ]]; then
-  log "NOTE: legacy $LEGACY_ENV still exists (its values are now in $NEW_ENV);"
-  log "      after verifying login, remove it with: shred -u $LEGACY_ENV"
+  log "NOTE: legacy $LEGACY_ENV still holds a copy of the secrets; it is shredded after the"
+  log "      verification block below succeeds (values now live in $NEW_ENV)."
 fi
 
 # ---------------------------------------------------------------------------
@@ -326,14 +363,21 @@ fi
 OC_ENV_FILE="$CONF/opencode.env"
 OC_PW_SYNC=$(read_secret "$OC_ENV_FILE" OPENCODE_PASSWORD)
 if [[ -n "$OC_PW_SYNC" ]]; then
-  if as_root env OC_PW_SYNC="$OC_PW_SYNC" node -e '
+  # The password travels through a 0600 temp file, never argv: `env KEY=value cmd`
+  # would expose it in /proc/*/cmdline and `ps` (and sudo logs can record the full
+  # command line). Same discipline as lib/env.sh and set-admin-password.sh.
+  make_tmp
+  printf '%s' "$OC_PW_SYNC" >"$TMP_LAST"
+  if as_root node -e '
     const fs = require("node:fs")
     const file = process.argv[1]
+    const pwFile = process.argv[2]
+    const pw = fs.readFileSync(pwFile, "utf8")
     let current = {}
     try { current = JSON.parse(fs.readFileSync(file, "utf8")) } catch {}
-    if (current.password === process.env.OC_PW_SYNC) process.exit(0)
-    fs.writeFileSync(file, JSON.stringify({ ...current, password: process.env.OC_PW_SYNC }), { mode: 0o600 })
-  ' "$OC_HOME/.config/opencode/service.json"; then
+    if (current.password === pw) process.exit(0)
+    fs.writeFileSync(file, JSON.stringify({ ...current, password: pw }), { mode: 0o600 })
+  ' "$OC_HOME/.config/opencode/service.json" "$TMP_LAST"; then
     as_root chown "$OC_USER:$OC_USER" "$OC_HOME/.config/opencode/service.json" 2>/dev/null || true
     as_root chmod 0600 "$OC_HOME/.config/opencode/service.json" 2>/dev/null || true
     log "aligned $OC_HOME/.config/opencode/service.json with the configured password"
@@ -382,11 +426,11 @@ make_tmp
 GEN="$TMP_LAST"
 if node "$PIFORGE/scripts/gen-sudoers.mjs" "$CONF/services.allowlist.json" --out "$GEN"; then
   log "generated the sudoers rule from $CONF/services.allowlist.json"
-elif [[ -f "$PIFORGE/deploy/sudoers.d-piforge-gw" ]]; then
-  cp "$PIFORGE/deploy/sudoers.d-piforge-gw" "$GEN"
-  log "WARN: gen-sudoers.mjs failed; using the committed template deploy/sudoers.d-piforge-gw"
 else
-  die "cannot produce a sudoers rule (gen-sudoers.mjs failed and no template)"
+  # Do NOT fall back to the committed template: it can drift from the allowlist
+  # (e.g. a unit was removed) and would keep granting privileges that are no
+  # longer intended. A broken generator must fail the deploy instead.
+  die "gen-sudoers.mjs failed — refusing to install a possibly stale sudoers template"
 fi
 
 # Stage with a leading dot: sudo ignores dotted files in sudoers.d, so a half-installed
@@ -464,13 +508,26 @@ done
 printf '[deploy] listening:\n'
 ss -lntp 2>/dev/null | grep -E ':(4096|8787)\b' || log "WARN: neither 4096 nor 8787 is listening"
 printf '[deploy] health: '
+HEALTH_OK=0
 if curl -fsS -m 5 http://127.0.0.1:8787/api/v1/health; then
   printf '\n'
+  HEALTH_OK=1
 else
   printf '\n[deploy] WARN: gateway health check failed (journalctl -u wb-gateway -n 50)\n'
 fi
 printf '[deploy] sudo rule: '
 as_root grep -c '^Cmnd_Alias PIFORGE_SERVICES' "$SUDOERS" 2>/dev/null || printf '0\n'
+
+# The checkout copy of gateway.env is now redundant (and a second plaintext secret
+# store). Remove it once the new layout is demonstrably working.
+if ((HEALTH_OK)) && [[ -f "$LEGACY_ENV" ]]; then
+  if command -v shred >/dev/null 2>&1; then
+    shred -u "$LEGACY_ENV" 2>/dev/null || rm -f "$LEGACY_ENV"
+  else
+    rm -f "$LEGACY_ENV"
+  fi
+  log "removed legacy $LEGACY_ENV (secrets live only in $NEW_ENV now)"
+fi
 
 if ((MIGRATED)); then
   log "data was migrated to $GW_HOME — scripts/rollback-pi.sh prints the manual steps to move it back"

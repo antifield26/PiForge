@@ -233,17 +233,10 @@ export function AgentPanel() {
     es = new EventSource("/api/v1/agent/events", { withCredentials: true })
     es.onopen = () => setStatus("已连接")
     es.onmessage = (ev) => handleEvent(ev.data)
-    es.onerror = (ev) => {
-      const data = (ev as MessageEvent).data
-      if (typeof data === "string" && data) {
-        try {
-          const parsed = JSON.parse(data) as { message?: string }
-          setStatus(`事件流出错：${parsed.message ?? "未知错误"}`)
-          return
-        } catch {
-          /* fall through to the reconnect notice */
-        }
-      }
+    es.onerror = () => {
+      // EventSource fires ErrorEvent (not MessageEvent) here — there is no .data.
+      // A dropped stream is usually an expired session (401 on reconnect) or network blip;
+      // the api() 401 handler will bounce to the login gate when the session is gone.
       setStatus("事件流断开，重连中…")
     }
   })

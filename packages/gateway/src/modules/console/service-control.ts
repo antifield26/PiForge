@@ -7,6 +7,16 @@ import { loadAllowlist, type AllowlistUnit } from "./allowlist.js"
 
 const execFileAsync = promisify(execFile)
 
+/**
+ * Injectable exec for tests: unit tests must never run a real `sudo systemctl`.
+ * Production keeps the real execFile; tests replace this via setServiceExec.
+ */
+export type ServiceExec = (cmd: string, args: string[]) => Promise<{ stdout: string }>
+let serviceExec: ServiceExec = async (cmd, args) => execFileAsync(cmd, args, { timeout: 15_000 })
+export function setServiceExec(fn: ServiceExec | null): void {
+  serviceExec = fn ?? (async (cmd, args) => execFileAsync(cmd, args, { timeout: 15_000 }))
+}
+
 export interface ServiceControlResult {
   allowed: boolean
   requiresConfirm?: boolean
@@ -15,6 +25,8 @@ export interface ServiceControlResult {
   action: ServiceAction
   active?: boolean
   result: string
+  /** True when the command was authorized but the underlying systemctl call failed. */
+  failed?: boolean
   auditId?: number
 }
 
@@ -28,14 +40,24 @@ export function setConfirmSecret(secret: string): void {
 }
 const confirmSecret = () => confirmSecretOverride ?? process.env.SESSION_SECRET ?? "dev-only-change-me"
 
-/** Bound to unit + action + user, so a token cannot be replayed by another session. */
-export function issueConfirmToken(unit: string, action: string, userId: string, now = Date.now()): string {
-  const exp = now + CONFIRM_TTL_MS
-  return `${exp}.${signConfirm(unit, action, userId, exp)}`
+// One-time use: a confirm token is bound to unit+action+user and may only be consumed once.
+// The jti is registered on verify and rejected on any later attempt.
+const usedJtis = new Map<string, number>()
+function pruneJtis(now = Date.now()): void {
+  for (const [jti, exp] of usedJtis) {
+    if (exp <= now) usedJtis.delete(jti)
+  }
 }
 
-function signConfirm(unit: string, action: string, userId: string, exp: number): string {
-  const payload = `${unit}|${action}|${userId}|${exp}`
+/** Bound to unit + action + user, and single-use (jti is consumed on verify). */
+export function issueConfirmToken(unit: string, action: string, userId: string, now = Date.now()): string {
+  const exp = now + CONFIRM_TTL_MS
+  const jti = randomBytes(8).toString("hex")
+  return `${exp}.${jti}.${signConfirm(unit, action, userId, exp, jti)}`
+}
+
+function signConfirm(unit: string, action: string, userId: string, exp: number, jti: string): string {
+  const payload = `${unit}|${action}|${userId}|${exp}|${jti}`
   return createHmac("sha256", confirmSecret()).update(payload).digest("base64url").slice(0, 22)
 }
 
@@ -46,14 +68,20 @@ export function verifyConfirmToken(
   token: string | undefined,
   now = Date.now(),
 ): boolean {
-  if (!token) return false
-  const [expStr, sig] = token.split(".")
+  if (typeof token !== "string" || !token) return false
+  const parts = token.split(".")
+  if (parts.length !== 3) return false
+  const [expStr, jti, sig] = parts
   const exp = Number(expStr)
-  if (!Number.isFinite(exp) || exp < now || !sig) return false
-  const expected = signConfirm(unit, action, userId, exp)
+  if (!Number.isFinite(exp) || exp < now || !jti || !sig) return false
+  if (usedJtis.has(jti)) return false // already consumed — reject replay
+  const expected = signConfirm(unit, action, userId, exp, jti)
   const a = Buffer.from(expected)
   const b = Buffer.from(sig)
-  return a.length === b.length && timingSafeEqual(a, b)
+  if (a.length !== b.length || !timingSafeEqual(a, b)) return false
+  pruneJtis(now)
+  usedJtis.set(jti, exp + 60_000) // keep the tombstone briefly past expiry
+  return true
 }
 
 export async function controlService(
@@ -77,13 +105,14 @@ export async function controlService(
   }
 
   if (action !== "status" && needsConfirm(entry, action)) {
-    if (!userId || !verifyConfirmToken(unit, action, userId, confirmToken)) {
-      const token = userId ? issueConfirmToken(unit, action, userId) : undefined
+    const token = typeof confirmToken === "string" ? confirmToken : undefined
+    if (!userId || !verifyConfirmToken(unit, action, userId, token)) {
+      const fresh = userId ? issueConfirmToken(unit, action, userId) : undefined
       const auditId = writeAudit(db, userId, unit, action, false, "needs confirm", clientIp)
       return {
         allowed: true,
         requiresConfirm: true,
-        confirmToken: token,
+        confirmToken: fresh,
         unit,
         action,
         result: "requires confirm",
@@ -99,19 +128,21 @@ export async function controlService(
       return { allowed: true, unit, action, active: active ?? undefined, result: `active=${active}`, auditId }
     }
 
-    await execFileAsync("sudo", ["systemctl", action, unit], { timeout: 15_000 })
+    await serviceExec("sudo", ["systemctl", action, unit])
     const auditId = writeAudit(db, userId, unit, action, true, "ok", clientIp)
     return { allowed: true, unit, action, result: "ok", auditId }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     const auditId = writeAudit(db, userId, unit, action, true, `error: ${msg.slice(0, 200)}`, clientIp)
-    return { allowed: true, unit, action, result: `error: ${msg.slice(0, 200)}`, auditId }
+    // Authorized but the command itself failed: the caller must see this in the HTTP
+    // status, not just a 200 body that happens to say "error".
+    return { allowed: true, unit, action, failed: true, result: `error: ${msg.slice(0, 200)}`, auditId }
   }
 }
 
 async function isActive(unit: string): Promise<boolean | null> {
   try {
-    const { stdout } = await execFileAsync("systemctl", ["is-active", unit], { timeout: 5000 })
+    const { stdout } = await serviceExec("systemctl", ["is-active", unit])
     return stdout.trim() === "active"
   } catch (e) {
     const stdout = (e as { stdout?: string }).stdout
@@ -176,8 +207,4 @@ export function writeAudit(
     )
     .run(Date.now(), userId, unit, action, allowed ? 1 : 0, result, clientIp)
   return Number(res.lastInsertRowid)
-}
-
-export function newConfirmSecret(): string {
-  return randomBytes(32).toString("base64url")
 }

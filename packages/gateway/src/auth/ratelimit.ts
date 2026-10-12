@@ -1,5 +1,3 @@
-import { randomBytes } from "node:crypto"
-
 export interface RateLimitOptions {
   limit: number
   windowMs: number
@@ -72,6 +70,25 @@ export function createLoginLimiters(ipLimit = 10, userLimit = 5, windowMs = 5 * 
   }
 }
 
-export function randomKey(bytes = 6): string {
-  return randomBytes(bytes).toString("hex")
+/**
+ * Per-user budget for authenticated heavy endpoints (journalctl, apt, backup, agent prompt).
+ * A stolen session should not be able to hammer the SD card or fork processes unbounded.
+ */
+export function createHeavyLimiter(limit = 30, windowMs = 60_000): RateLimiter {
+  return createRateLimiter({ limit, windowMs, maxKeys: 1000 })
+}
+
+/**
+ * Per-user check for authenticated heavy endpoints. Returns `retryAfterSec > 0`
+ * when the caller is over budget; the route should answer 429 with Retry-After.
+ */
+export function checkHeavy(
+  limiter: RateLimiter,
+  userId: string,
+  now = Date.now(),
+): { allowed: boolean; retryAfterSec: number } {
+  const verdict = limiter.check(userId, now)
+  if (!verdict.allowed) return { allowed: false, retryAfterSec: verdict.retryAfterSec }
+  limiter.record(userId, now)
+  return { allowed: true, retryAfterSec: 0 }
 }

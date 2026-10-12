@@ -68,3 +68,16 @@ export function isHttpUrl(value: string): boolean {
 export function isTodoStatus(value: string): value is "open" | "done" | "archived" {
   return value === "open" || value === "done" || value === "archived"
 }
+
+/** Escape `%`/`_`/`\` so user input cannot widen a LIKE search. Pair with `ESCAPE '\'`. */
+export function likeContains(value: string): string {
+  return `%${value.replace(/[\\%_]/g, (m) => `\\${m}`)}%`
+}
+
+/** Require a real string body field; anything else is a 400, never a TypeError. */
+export function requireString(value: unknown, field: string, maxLength = 2000): string | null {
+  if (typeof value !== "string") return null
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  return trimmed.length > maxLength ? trimmed.slice(0, maxLength) : trimmed
+}

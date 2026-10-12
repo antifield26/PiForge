@@ -1,10 +1,10 @@
 import type { FastifyPluginAsync } from "fastify"
 import { randomUUID } from "node:crypto"
-import { mkdir, readFile, unlink, writeFile } from "node:fs/promises"
+import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises"
 import { createReadStream, existsSync } from "node:fs"
 import { basename, extname, join } from "node:path"
 import { requireAuth } from "../auth/routes.js"
-import { asOptionalString, asTrimmedString, isHttpUrl, sendError } from "../../util/validate.js"
+import { asOptionalString, asTrimmedString, isHttpUrl, likeContains, sendError } from "../../util/validate.js"
 import type { Db } from "../../db/index.js"
 
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024
@@ -22,8 +22,8 @@ export const cloudRoutes: FastifyPluginAsync = async (app) => {
     let sql = "SELECT id, url, title, folder, created_at FROM bookmarks WHERE user_id = ?"
     const params: (string | number)[] = [auth.userId]
     if (q) {
-      sql += " AND (url LIKE ? OR title LIKE ?)"
-      params.push(`%${q}%`, `%${q}%`)
+      sql += " AND (url LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\')"
+      params.push(likeContains(q), likeContains(q))
     }
     if (folder) {
       sql += " AND folder = ?"
@@ -144,7 +144,7 @@ export const cloudRoutes: FastifyPluginAsync = async (app) => {
           // Missing current file: nothing to preserve, keep the overwrite going.
         }
 
-        await writeFile(currentPath, buf, { mode: 0o600 })
+        await writeAtomic(currentPath, buf)
         app.db
           .prepare("UPDATE cloud_files SET size = ?, mime = ?, created_at = ? WHERE id = ?")
           .run(buf.length, mime, ts, existing.id)
@@ -155,7 +155,7 @@ export const cloudRoutes: FastifyPluginAsync = async (app) => {
       const id = randomUUID()
       const key = fileKey(auth.userId, id, safe)
       await mkdir(join(root, auth.userId), { recursive: true })
-      await writeFile(join(root, key), buf, { mode: 0o600 })
+      await writeAtomic(join(root, key), buf)
       app.db
         .prepare("INSERT INTO cloud_files (id, user_id, path, size, mime, storage_key, created_at) VALUES (?,?,?,?,?,?,?)")
         .run(id, auth.userId, safe, buf.length, mime, key, ts)
@@ -225,6 +225,13 @@ export const cloudRoutes: FastifyPluginAsync = async (app) => {
 
 function fileKey(userId: string, id: string, safeNameValue: string): string {
   return `${userId}/${id}${extname(safeNameValue)}`
+}
+
+/** Write via tmp + rename so a crash cannot leave a truncated file behind. */
+async function writeAtomic(path: string, buf: Buffer): Promise<void> {
+  const tmp = `${path}.tmp-${randomUUID()}`
+  await writeFile(tmp, buf, { mode: 0o600 })
+  await rename(tmp, path)
 }
 
 function safeName(name: string): string {

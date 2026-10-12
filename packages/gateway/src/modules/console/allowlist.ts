@@ -32,12 +32,3 @@ export function loadAllowlist(): AllowlistUnit[] {
     return []
   }
 }
-
-export function findUnit(unit: string): AllowlistUnit | undefined {
-  return loadAllowlist().find((u) => u.name === unit)
-}
-
-export function needsConfirm(unit: string, action: string): boolean {
-  const u = findUnit(unit)
-  return !!u?.confirm?.includes(action)
-}

@@ -33,3 +33,24 @@ export interface ApiError {
     message: string
   }
 }
+
+/** Row shape of backup_runs (snake_case mirrors the DB column names). */
+export interface BackupRun {
+  id: number
+  started_at: number
+  finished_at: number | null
+  status: string
+  target: string
+  bytes: number | null
+  checksum: string | null
+  message: string | null
+}
+
+export interface CloudFile {
+  id: string
+  name: string
+  size: number
+  mime?: string | null
+  createdAt: number
+  versions?: number
+}

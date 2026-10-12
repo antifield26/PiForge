@@ -26,9 +26,10 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     if (purgeTimer) clearInterval(purgeTimer)
   })
 
-  app.post<{ Body: { username?: string; password?: string } }>("/login", async (req, reply) => {
-    const username = req.body?.username?.trim()
-    const password = req.body?.password
+  app.post<{ Body: { username?: unknown; password?: unknown } }>("/login", async (req, reply) => {
+    // Type-guard first: a non-string username/password must be a 400, not a TypeError/500.
+    const username = typeof req.body?.username === "string" ? req.body.username.trim() : ""
+    const password = typeof req.body?.password === "string" ? req.body.password : ""
     if (!username || !password) {
       return sendError(reply, 400, "BAD_REQUEST", "username and password required")
     }

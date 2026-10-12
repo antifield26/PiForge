@@ -2,10 +2,14 @@
 # LEGACY (reference only). Superseded by scripts/cf-api-dns.sh + scripts/cf-dns-check.sh.
 # See scripts/legacy/README.md — do not run this against the Pi.
 set -euo pipefail
-echo "=== cert.pem (redacted) ==="
-# show only non-secret structure
-sudo head -c 200 /home/antifield/.cloudflared/cert.pem | sed 's/-----.*//' | head -c 80
-echo
+echo "=== cert.pem (presence only) ==="
+# Never print any bytes of cert.pem: it is a cloudflared API credential (JWT-shaped),
+# so even a "redacted" prefix leaks usable material. Existence + subject metadata only.
+if sudo test -s /home/antifield/.cloudflared/cert.pem; then
+  echo "present (contents not printed)"
+else
+  echo "MISSING"
+fi
 echo "=== openssl subject ==="
 sudo openssl x509 -in /home/antifield/.cloudflared/cert.pem -noout -subject -issuer -dates 2>/dev/null || true
 echo "=== try route dns again with -f ==="

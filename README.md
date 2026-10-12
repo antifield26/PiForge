@@ -41,18 +41,21 @@ Node.js 26 LTS · TypeScript · Fastify · SolidJS · Tailwind · SQLite · Open
 npm install
 npm run build
 
-# 2. 实机部署（详见 AGENTS.md）
-ssh antifield@169.254.77.10
-# bash /home/antifield/piforge/scripts/deploy-pi.sh
+# 2. 同步到实机并部署（详见 AGENTS.md §5）
+rsync -az --delete --exclude node_modules --exclude .git --exclude opencode --exclude data \
+  ./ antifield@169.254.77.10:/home/antifield/piforge/
+ssh antifield@169.254.77.10 'bash /home/antifield/piforge/scripts/deploy-pi.sh'
+# 3. 实机端到端验证
+ssh antifield@169.254.77.10 'sudo node /opt/piforge/scripts/verify-e2e.mjs'
 
 # 3. 访问
 # 公网：https://cloud.antifield.work （密码登录）
 # 本地：http://127.0.0.1:8787
 ```
 
-备份：Pi 本地 `~/backups/piforge` → Windows `D:\PiBackUp`（`scripts/backup-pull.ps1`）。
+备份：Pi 本地 `/var/lib/piforge/backups/piforge`（每晚 03:15）→ Windows `D:\PiBackUp`（`scripts/backup-pull.ps1`）。
 
-P0 完成前请先阅读 `docs/RESEARCH.md` 与 `docs/TASK-INDEX.md`。
+阅读入口：`docs/RESEARCH.md`（实测调研）与 `docs/TASK-INDEX.md`（任务事实源）。
 
 ## 文档索引
 
@@ -63,6 +66,8 @@ P0 完成前请先阅读 `docs/RESEARCH.md` 与 `docs/TASK-INDEX.md`。
 | [docs/ROADMAP.md](docs/ROADMAP.md) | 里程碑 P0/P1/P2 |
 | [docs/TASK-INDEX.md](docs/TASK-INDEX.md) | 任务索引（唯一事实源） |
 | [AGENTS.md](AGENTS.md) | 开发/部署/安全守则 |
+| [docs/PERF.md](docs/PERF.md) | P2.6 性能与内存报告 |
+| [docs/WRITE-RELIEF.md](docs/WRITE-RELIEF.md) | P0.9 写入减负核验 |
 | [CHANGELOG.md](CHANGELOG.md) | 变更记录 |
 
 ## 安全

@@ -15,7 +15,7 @@
 | CPU | 4 核，Revision `d04170` | Pi 5 8GB；当前频率 2.4 GHz |
 | 内存 | 总 7.9 GiB，可用约 4.8 GiB | 含 zram 2 GiB swap |
 | 系统盘 | `/dev/mmcblk0p2` 59G ext4，已用 27G (48%) | 另有 `/boot/firmware` 512M vfat |
-| 用户 | `antifield` (uid=1000)，组含 sudo/gpio/i2c/spi | **唯一用户，不新建 piwork**；sudo 为 NOPASSWD: ALL |
+| 用户 | `antifield` (uid=1000)，组含 sudo/gpio/i2c/spi | 登录用户（服务已拆到 piforge-gw / piforge-oc）；sudo 为 NOPASSWD: ALL |
 | 温度（空载） | 50.5 °C，`throttled=0x0` | 无过热降频 |
 | 负载（空载） | load average 0.00 / 0.00 / 0.06 | 11h uptime |
 
@@ -59,7 +59,7 @@
 | 官方包管理器 | `packageManager: bun@1.4.2` | 开发构建用 Bun；**发布产物为原生二进制**，不依赖 Node 版本 |
 | npm 包 | `@opencode/cli`，postinstall 下载平台二进制 | 仅需 Node 能跑 npm；实测 Pi 上 Node **v26.11.1** 可用 |
 | TypeScript | 5.8.2 + `@typescript/native-preview` 7.0.0-dev | 仅构建期 |
-| 工作台技术栈 | Node 26 LTS + TypeScript 7 | 与 OpenCode **无运行时耦合**（OpenCode 以独立进程 + HTTP API 接入） |
+| 工作台技术栈 | Node 26 LTS + TypeScript 5.8 | 与 OpenCode **无运行时耦合**（OpenCode 以独立进程 + HTTP API 接入） |
 
 **结论**：**不需要双轨 Node 版本管理器**。OpenCode v2 发布形态是原生二进制（内部基于 Bun），工作台用系统 Node 26 即可，二者进程隔离、互不干扰。若后续要从源码构建 OpenCode，再引入 bun/版本管理器。
 
@@ -154,8 +154,8 @@ opencode/
 | journald | **volatile 已配置** | `/etc/systemd/journald.conf.d/10-workbench-volatile.conf`：`Storage=volatile`，`RuntimeMaxUse=64M` |
 | /tmp | **tmpfs 4G** | `tmpfs on /tmp` |
 | zram swap | **2G** | `zram0 [SWAP]` |
-| SQLite 建议 | 待实施 | WAL + `synchronous=NORMAL`（工作台库） |
-| 监控时序 | 待实施 | 内存聚合，5–10 分钟批量落盘 |
+| SQLite 建议 | 已实施 | WAL + `synchronous=NORMAL`（工作台库） |
+| 监控时序 | 已实施 | 内存聚合，5 分钟批量落盘 |
 
 > 注：journald drop-in 文件头注释写有「生效：cp 到 /etc/systemd/journald.conf.d/」，但该目录下文件已存在；`journalctl --disk-usage` 显示 27.4M（含归档残留）。P0 需验证 `Storage=volatile` 确已生效（重启后日志不落盘）。
 
@@ -190,7 +190,7 @@ T1 mmcblk0p2 sectors_written = 6162800   (2026-10-11 20:15:55)
 
 - `eth0` 链路本地邻居：`169.254.77.203`（另有本机 `169.254.77.10` 为 SSH 目标）。
 - `wlan0` 网关：`172.23.88.1`。
-- 双网卡在线；备份走 NAS 时需确认 NAS 在哪一侧可达（见 §5）。
+- 双网卡在线；备份目标为 Pi 本地 + Windows `D:\PiBackUp`（见 §5）。
 
 ### 4.3 工作台公网暴露模型（设计约束）
 
@@ -210,9 +210,9 @@ T1 mmcblk0p2 sectors_written = 6162800   (2026-10-11 20:15:55)
 | 当前挂载 | **无** NAS 挂载（`/etc/fstab` 仅有系统分区） |
 | 邻居中的 NAS | **未发现明确 NAS 地址**（仅网关与链路本地邻居） |
 
-**结论**：客户端能力齐备。**备份目标已定为 Windows 本机 `D:\PiBackUp`**（`scripts/backup-pull.ps1` 从 Pi SSH 拉取），不另建 NAS。Pi 本地 `~/backups/piforge` 作暂存；校验与恢复演练已通过。
+**结论**：客户端能力齐备。**备份目标已定为 Windows 本机 `D:\PiBackUp`**（`scripts/backup-pull.ps1` 从 Pi SSH 拉取），不另建 NAS。Pi 本地 `/var/lib/piforge/backups/piforge`；校验与恢复演练已通过。
 
-**风险**：NAS 不可达或凭证缺失会阻塞「每晚备份」出口标准。缓解：P0 先做本地备份 + 校验脚本，NAS 接入作为独立任务；失败告警走工作台通知 + 日志。
+**风险**：Windows 侧拉取失败会导致异地副本缺失。缓解：Pi 本地夜间备份 + restore-drill 先行；`backup-pull.ps1` 失败告警；NAS 不再作为出口依赖。
 
 ---
 
@@ -227,11 +227,11 @@ T1 mmcblk0p2 sectors_written = 6162800   (2026-10-11 20:15:55)
 
 **方案评估**：
 
-1. **sudo + 白名单脚本**：网关以 `antifield` 运行（用户决策：唯一用户）；仍仅允许白名单 unit 的 start/stop/restart/status，全量审计。
+1. **sudo + 白名单脚本**：网关现以专用用户 `piforge-gw` / `piforge-oc` 运行（见 ARCHITECTURE §6.2）；仍仅允许白名单 unit 的 start/stop/restart/status，全量审计。
 2. **polkit 自定义规则**：允许特定 user/group 对指定 unit 调 `manage-units`，无需 sudo；更细粒度，配置稍复杂。
 3. **两者皆审计**：操作写入工作台库 `audit_log`（journald 为 volatile，持久审计不依赖 journald）。
 
-**注意**：`antifield` 为唯一用户（用户决策：不新建 piwork）。systemd 服务以 `antifield` 运行；白名单 systemd + 审计仍强制执行以限制控制面。
+**注意**：`antifield` 为唯一用户（用户决策：不新建 piwork）。systemd 服务现以专用用户 `piforge-gw` / `piforge-oc` 运行；白名单 systemd + 审计仍强制执行以限制控制面。
 
 ---
 
@@ -274,11 +274,11 @@ T1 mmcblk0p2 sectors_written = 6162800   (2026-10-11 20:15:55)
 | # | 问题 | 对策 |
 |---|---|---|
 | 1 | OpenCode 源码构建依赖 Bun；Pi 未装 bun | 使用官方 ARM64 二进制 / npm `@opencode/cli`，不源码构建 |
-| 2 | TS 7 / Node 26 仅约束工作台 | 工作台独立 Node 26；OpenCode 独立进程，无版本耦合 |
+| 2 | TS 5.8 / Node 26 仅约束工作台 | 工作台独立 Node 26；OpenCode 独立进程，无版本耦合 |
 | 3 | Desktop Electron 包较大，ARM64 内存敏感 | Agent 模块通过 **网关代理 OpenCode Web/HTTP**，不必在 Pi 上跑 Electron；视觉沿用其 token |
 | 4 | journald volatile 后审计易失 | 持久审计写工作台 SQLite + 每晚备份；不依赖 journald |
 | 5 | SD 无健康接口 | 写入量+速率+日历寿命估算；告警阈值可配 |
-| 6 | NAS 未就绪 | 先本地备份+校验；NAS 独立任务；失败告警 |
+| 6 | 异地副本拉取失败 | Pi 本地备份+校验；Windows 拉取脚本失败告警 |
 | 7 | cloudflared 偶发 TLS 超时 | 已自动重试；网关侧做健康检查与状态展示 |
 | 8 | `antifield` NOPASSWD ALL | 唯一用户决策已接受；白名单 systemd + 审计约束控制面 |
 | 9 | Minecraft 抢内存/IO | 内存预算按共存校准；监控写入与 OpenCode 会话限额 |
@@ -289,7 +289,7 @@ T1 mmcblk0p2 sectors_written = 6162800   (2026-10-11 20:15:55)
 
 | 风险 | 等级 | 缓解 |
 |---|---|---|
-| SD 卡写入磨损导致数据丢失 | 高 | log2ram/journald volatile/WAL/批量落盘/tmpfs；每晚 NAS 备份+校验+恢复演练；写入监控告警 |
+| SD 卡写入磨损导致数据丢失 | 高 | log2ram/journald volatile/WAL/批量落盘/tmpfs；每晚本地备份+校验+恢复演练，并拉取到 Windows `D:\PiBackUp`；写入监控告警 |
 | 公网暴露面扩大 | 高 | 仅 Cloudflare Tunnel；零入站端口；密码登录+会话 TTL；OpenCode 只绑 localhost |
 | OpenCode v2 API 变动破坏适配器 | 中 | 薄适配器唯一边界；只依赖稳定端点子集；版本锁定 + 契约测试 |
 | 权限提升（白名单外服务） | 高 | 白名单制+审计；专用服务用户；默认拒绝 |
@@ -330,5 +330,5 @@ T1 mmcblk0p2 sectors_written = 6162800   (2026-10-11 20:15:55)
 2. **Node 双轨不必要**：OpenCode 与工作台进程/运行时隔离。
 3. **写入减负基础已就位**：log2ram、journald volatile、tmpfs、zram；补 WAL+批量落盘+备份即可达标。
 4. **公网安全路径清晰**：Cloudflare Tunnel + 密码登录 + localhost 暴露 OpenCode。
-5. **主要缺口**：NAS 备份对接、专用服务用户、OpenCode 实机 RSS/SSE 实测、SD 空载写入基线。
+5. **已闭合**：备份目标定为本地+Windows；专用服务用户 piforge-gw/oc 已落地；OpenCode 实机 RSS/SSE 已测。**遗留**：SD 空载写入基线待补测。
 6. **视觉**：完整 v2 token 可复用，三模块风格统一无障碍。

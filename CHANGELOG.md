@@ -4,6 +4,25 @@
 
 ## [Unreleased]
 
+
+### Security
+
+- 2026-10-13 路 **审计修复（Critical/High）**：`deploy-pi.sh` 同步 OpenCode 密码改为 0600 临时文件传递，不再经 `env KEY=value` 进 argv（此前 `/proc/*/cmdline` 与 `ps` 可见）；`backup-pull.ps1` 的含密钥 tar 从 `chmod 0644` 改为 `chown` 给 SSH 用户 + `0600`；`.gitignore` 补 `*.env` / `service.json` / `credentials.json` / `data/`。
+- 2026-10-13 路 **红线 4 门禁**：`deploy-pi.sh` 迁移 `wb.db`/`cloud` 前强制生成 safety backup（sha256 + `PRAGMA integrity_check`），任一失败即拒绝迁移；sudoers 生成失败改为 die（不再回退可能过期的静态模板）；健康检查通过后自动 shred 检出目录遗留的 `gateway.env`。
+- 2026-10-13 路 confirm 令牌改为一次性（jti 消费，防 60s 内重放）；服务控制失败返回 502 `SERVICE_CONTROL_FAILED`（不再假 200）；登录/confirmToken 非字符串输入归一为 400；OpenCode/日志上游错误详情只记服务端日志，客户端收稳定文案。
+- 2026-10-13 路 重资源端点（journalctl/apt/backup run/agent prompt）加认证后按用户限速；LIKE 搜索转义 `%`/`_`；云文件覆盖写改为 tmp+rename 原子写；SSE 响应补安全头；`/` 不再回显 `webDist` 绝对路径；metrics 导出上限 20 万 → 10 万。
+
+### Fixed
+
+- 2026-10-13 路 单测不再真实执行 `sudo systemctl`（`setServiceExec` 注入）；新增 CSRF Origin、类型混淆、confirm 重放、服务失败 502 等 6 项测试（`npm test` 34/34）。
+- 2026-10-13 路 `shared` 类型与 gateway 对齐（`AuditEntry`/`BackupRun`/`CloudFile`/`MAX_UPLOAD_BYTES`）；登录框默认用户名清空；SSE `onerror` 不再把 ErrorEvent 当 MessageEvent。
+- 2026-10-13 路 `deploy-pi.sh` 改密指引改为交互/环境变量（不再提示 argv）；`gen-sudoers.mjs` 错误文案与 unit 字符集一致；`legacy/cf-dns-retry.sh` 不再打印 cert.pem 片段；`wire-cloudflared.sh` 标注 Minecraft 公网入口为有意暴露。
+
+### Changed
+
+- 2026-10-13 路 文档回写：README 备份目标/部署命令/文档索引；RESEARCH 服务用户、TS 版本、WAL/批量落盘状态、NAS 表述与遗留缺口。
+
+
 ### Added
 
 - 2026-10-12 · **测试与验证**：新增 `npm test`（`node:test`，28 项：认证/限速/错误契约/上传与版本/白名单与确认令牌/metrics 写入纪律/SD 计数折叠/SSE 帧映射/客户端 IP 信任）与 `npm run verify`（typecheck+test）；新增 `scripts/verify-e2e.mjs`（实机端到端验证：登录、控制台、上传 3MB、版本回滚、白名单 403、确认令牌、metrics 零写、SSE 心跳、工作区隔离）。

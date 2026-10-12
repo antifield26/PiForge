@@ -1,11 +1,10 @@
 import { createSignal, For, onMount, Show } from "solid-js"
-import type { Bookmark } from "@piforge/shared"
+import type { Bookmark, CloudFile } from "@piforge/shared"
+import { MAX_UPLOAD_BYTES } from "@piforge/shared"
 import { api, errorText } from "./api"
 
-type CloudFile = { id: string; name: string; size: number; createdAt: number }
 type PendingDelete = { kind: "file" | "bookmark"; id: string; label: string }
 
-const MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 const BASE64_CHUNK = 8 * 1024
 
 /** `btoa(String.fromCharCode(...bytes))` blows the argument limit above ~122KB. */

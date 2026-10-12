@@ -18,7 +18,7 @@ export const historyRoutes: FastifyPluginAsync = async (app) => {
       }
       const to = clampInt(req.query.to, Date.now(), 0, Number.MAX_SAFE_INTEGER)
       const from = clampInt(req.query.from, to - 7 * 86400_000, 0, Number.MAX_SAFE_INTEGER)
-      const limit = clampInt(req.query.limit, 50_000, 1, 200_000)
+      const limit = clampInt(req.query.limit, 50_000, 1, 100_000)
       const items = queryMetrics(app.db, kind, from, to, limit)
 
       if (req.query.format === "csv") {

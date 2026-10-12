@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from "fastify"
 import { randomUUID } from "node:crypto"
 import { requireAuth } from "../auth/routes.js"
-import { asFiniteNumber, asOptionalString, asStringArray, asTrimmedString, isTodoStatus, sendError } from "../../util/validate.js"
+import { asFiniteNumber, asOptionalString, asStringArray, asTrimmedString, isTodoStatus, likeContains, sendError } from "../../util/validate.js"
 
 const MAX_TITLE = 300
 const MAX_NOTES = 20_000
@@ -32,8 +32,8 @@ export const workbenchRoutes: FastifyPluginAsync = async (app) => {
       params.push(status)
     }
     if (q) {
-      sql += " AND (title LIKE ? OR notes LIKE ?)"
-      params.push(`%${q}%`, `%${q}%`)
+      sql += " AND (title LIKE ? ESCAPE '\\' OR notes LIKE ? ESCAPE '\\')"
+      params.push(likeContains(q), likeContains(q))
     }
     sql += " ORDER BY updated_at DESC LIMIT 200"
     const rows = app.db.prepare(sql).all(...params) as {
@@ -156,8 +156,8 @@ export const workbenchRoutes: FastifyPluginAsync = async (app) => {
     let sql = "SELECT id, title, body, tags, created_at, updated_at FROM notes WHERE user_id = ?"
     const params: (string | number)[] = [auth.userId]
     if (q) {
-      sql += " AND (title LIKE ? OR body LIKE ?)"
-      params.push(`%${q}%`, `%${q}%`)
+      sql += " AND (title LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\')"
+      params.push(likeContains(q), likeContains(q))
     }
     sql += " ORDER BY updated_at DESC LIMIT 200"
     const rows = app.db.prepare(sql).all(...params) as {

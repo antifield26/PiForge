@@ -137,7 +137,8 @@ export async function buildApp(config: GatewayConfig, options: BuildOptions = {}
   if (webIndex) {
     await app.register(fastifyStatic, { root: webDist, prefix: "/", index: ["index.html"], wildcard: false })
   } else {
-    app.get("/", async () => ({ ok: true, message: "PiForge API up; web dist not found", webDist }))
+    // Do not echo the absolute webDist path: it is local filesystem layout.
+    app.get("/", async () => ({ ok: true, message: "PiForge API up; web dist not found" }))
   }
 
   app.addHook("onClose", async () => {

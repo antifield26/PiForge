@@ -58,7 +58,7 @@ for (const unit of parsed.units) {
   if (unit === null || typeof unit !== "object") fail(`${allowlistPath}: unit entries must be objects`)
   const name = unit.name
   if (typeof name !== "string" || !UNIT_RE.test(name)) {
-    fail(`${allowlistPath}: refusing unit name ${JSON.stringify(name)} (allowed characters: A-Za-z0-9@._:-)`)
+    fail(`${allowlistPath}: refusing unit name ${JSON.stringify(name)} (allowed characters: A-Za-z0-9@._-)`)
   }
   if (!Array.isArray(unit.allow)) fail(`${allowlistPath}: unit ${name} has no "allow" array`)
   for (const action of unit.allow) {

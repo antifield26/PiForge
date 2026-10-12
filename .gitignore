@@ -17,8 +17,11 @@ build/
 .env
 .env.*
 !.env.example
+*.env
 *.pem
 *.key
+service.json
+credentials.json
 
 # OS / editor
 .DS_Store
@@ -39,6 +42,9 @@ tmp/
 *.db-shm
 *.sqlite
 *.sqlite3
+
+# Local runtime state / cloud uploads (may contain user files)
+data/
 
 # Deploy artifacts
 release/

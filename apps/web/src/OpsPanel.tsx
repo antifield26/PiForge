@@ -1,14 +1,6 @@
 import { createSignal, For, onMount, Show } from "solid-js"
-import type { AgentSession, SdHealth } from "@piforge/shared"
+import type { AgentSession, BackupRun, SdHealth } from "@piforge/shared"
 import { api, errorText } from "./api"
-
-type BackupRun = {
-  id: number
-  started_at: number
-  status: string
-  target: string
-  message: string | null
-}
 
 const BACKUP_STATUS_LABELS: Record<string, string> = {
   ok: "成功",

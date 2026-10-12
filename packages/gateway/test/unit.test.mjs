@@ -66,6 +66,16 @@ test("confirm token is bound to unit, action and user", () => {
   assert.equal(verifyConfirmToken("nginx.service", "restart", "user-a", undefined, now), false)
 })
 
+test("confirm token is single-use (jti cannot be replayed)", () => {
+  setConfirmSecret("unit-test-secret")
+  const now = 2_000_000
+  const token = issueConfirmToken("nginx.service", "restart", "user-a", now)
+  assert.equal(verifyConfirmToken("nginx.service", "restart", "user-a", token, now + 100), true)
+  assert.equal(verifyConfirmToken("nginx.service", "restart", "user-a", token, now + 200), false, "replay must fail")
+  const fresh = issueConfirmToken("nginx.service", "restart", "user-a", now + 300)
+  assert.equal(verifyConfirmToken("nginx.service", "restart", "user-a", fresh, now + 400), true, "a new token still works")
+})
+
 // ---------------------------------------------------------------- SSE mapping
 
 test("SSE frames map to stream events and unknown frames are dropped", () => {
