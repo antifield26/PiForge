@@ -90,11 +90,11 @@
 | P3.1.2 | 规则检测器：备份/进程掉线 | P3.1 | done | 单测注入假事件生成通知 | — |
 | P3.1.3 | 规则检测器：SD 写入/内存阈值 | P3.1 | done | 越界生成通知，可 resolve | — |
 | P3.1.4 | 投递：工作台通知 + 可选 webhook | P3.1 | done | 失败重试一次并记日志 | — |
-| P3.1.5 | 去重冷却 + 实机验证 | P3.1 | in-progress | 同 key N 分钟不重复；实机断 opencode 见通知 | — |
+| P3.1.5 | 去重冷却 + 实机验证 | P3.1 | done | 同 key N 分钟不重复；实机断 opencode 见通知 | — |
 | P3.2.1 | 阈值写入 settings + 校验 | P3.2 | done | API 可读写；非法值拒绝 | — |
 | P3.2.2 | alerts REST API | P3.2 | done | GET/POST/read；401；分页未读数 | ARCHITECTURE §9 |
 | P3.2.3 | 前端通知铃铛 + 阈值编辑 | P3.2 | done | 未读角标；保存生效 | — |
-| P3.2.4 | 测试 + 实机阈值触发 | P3.2 | in-progress | npm test 全绿 + 实机一条真实通知 | — |
+| P3.2.4 | 测试 + 实机阈值触发 | P3.2 | done | npm test 全绿 + 实机一条真实通知 | — |
 | P3.3.1 | GET /auth/sessions | P3.3 | done | 仅自身会话；不回 token | — |
 | P3.3.2 | 吊销单会话 + 全部登出 | P3.3 | done | 吊销后 cookie 失效；禁跨用户 | — |
 | P3.3.3 | 会话列表 UI | P3.3 | done | 可见/可踢；当前会话标记 | — |

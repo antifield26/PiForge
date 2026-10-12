@@ -24,6 +24,7 @@
 
 
 ### Added
+- 2026-10-13 路 **P3.1–P3.3 实机验收通过**：部署至 RPI5 后 erify-e2e 39/39；新增 scripts/verify-p3.mjs（阈值读写、三类告警触发与冷却、全部已读、会话吊销/登出其他）12/12；红线复查（4096/8787 仅 localhost、Environment 无密钥）通过。
 - 2026-10-13 路 **P3.1–P3.3 开工落地**：lerts/login_audit 表；告警规则（备份失败/partial、服务掉线、SD 日写入、内存不足）+ 去重冷却 + 可选 webhook（ALERT_WEBHOOK_URL）；/console/alerts* API 与阈值配置；前端通知面板；会话列表/吊销/登出其他 + login_audit 记录。本地 
 pm run verify 41/41。实机验证（P3.1.5/P3.2.4）待部署后 erify-e2e。
 
