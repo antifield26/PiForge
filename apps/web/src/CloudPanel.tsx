@@ -3,6 +3,9 @@ import type { Bookmark, CloudFile } from "@piforge/shared"
 import { MAX_UPLOAD_BYTES } from "@piforge/shared"
 import { api, errorText } from "./api"
 
+/** A 20 MB upload over a slow link is legitimately slow, but it must not hang forever. */
+const UPLOAD_TIMEOUT_MS = 120_000
+
 type PendingDelete = { kind: "file" | "bookmark"; id: string; label: string }
 
 const BASE64_CHUNK = 8 * 1024
@@ -35,6 +38,7 @@ export function CloudPanel() {
   const [bmFolder, setBmFolder] = createSignal("")
   const [err, setErr] = createSignal("")
   const [uploading, setUploading] = createSignal<string | null>(null)
+  let uploadAbort: AbortController | null = null
   const [pendingDelete, setPendingDelete] = createSignal<PendingDelete | null>(null)
   const [deleting, setDeleting] = createSignal(false)
 
@@ -92,16 +96,28 @@ export function CloudPanel() {
     }
     setUploading(file.name)
     setErr("")
+    // A stalled request used to pin `uploading` forever and leave the file input disabled with no
+    // way back, so bound the request and keep a handle to abort it from the UI.
+    const controller = new AbortController()
+    uploadAbort = controller
+    const timeout = setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS)
     try {
       const bytes = new Uint8Array(await file.arrayBuffer())
       await api("/api/v1/files", {
         method: "POST",
         body: JSON.stringify({ name: file.name, contentBase64: toBase64(bytes), mime: file.type || null }),
+        signal: controller.signal,
       })
       await refresh()
     } catch (e) {
-      setErr(`上传失败：${errorText(e)}`)
+      if (controller.signal.aborted) {
+        setErr(`上传「${file.name}」已取消或超时（${UPLOAD_TIMEOUT_MS / 1000}s），可重试`)
+      } else {
+        setErr(`上传失败：${errorText(e)}`)
+      }
     } finally {
+      clearTimeout(timeout)
+      if (uploadAbort === controller) uploadAbort = null
       setUploading(null)
     }
   }
@@ -188,6 +204,14 @@ export function CloudPanel() {
             <p class="sr-only" aria-live="polite">
               {uploading() ? "文件上传中" : ""}
             </p>
+            <Show when={uploading() != null}>
+              <button
+                class="mb-3 rounded-lg border border-black/10 px-2 py-1 text-xs text-[var(--pf-grey-700)]"
+                onClick={() => uploadAbort?.abort()}
+              >
+                取消上传
+              </button>
+            </Show>
             <ul class="space-y-2">
               <For each={files()} fallback={<li class="text-sm text-[var(--pf-grey-700)]">暂无文件</li>}>
                 {(f) => (

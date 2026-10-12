@@ -61,8 +61,13 @@ export function AuditPanel() {
       const a = document.createElement("a")
       a.href = url
       a.download = `audit-${tab()}-${Date.now()}.csv`
+      // A detached anchor is ignored by some browsers, and revoking the blob URL in the same task
+      // can cancel the download before it starts, so attach it and revoke on the next tick.
+      a.style.display = "none"
+      document.body.appendChild(a)
       a.click()
-      URL.revokeObjectURL(url)
+      a.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
     } catch (e) {
       setErr(`导出失败：${errorText(e)}`)
     }

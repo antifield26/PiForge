@@ -10,6 +10,7 @@ import { OpsPanel } from "./OpsPanel"
 import { LoginGate } from "./LoginGate"
 import { ServicesPanel } from "./ServicesPanel"
 import { api, errorText, setUnauthorizedHandler } from "./api"
+import { storeSession } from "./agentSession"
 
 export function App() {
   const [authed, setAuthed] = createSignal<boolean | null>(null)
@@ -18,6 +19,7 @@ export function App() {
 
   setUnauthorizedHandler(() => {
     if (authed() === true) setNotice("登录已过期，请重新登录")
+    storeSession(null)
     setAuthed(false)
   })
 
@@ -45,6 +47,9 @@ export function App() {
       setNotice(`退出登录请求失败：${errorText(e)}`)
     } finally {
       setLoggingOut(false)
+      // Drop the remembered Agent session too: otherwise the next login on this browser opens the
+      // previous user's conversation.
+      storeSession(null)
       setAuthed(false)
     }
   }

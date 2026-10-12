@@ -1,4 +1,4 @@
-import { createSignal, For, onMount, Show } from "solid-js"
+import { createSignal, For, onCleanup, onMount, Show } from "solid-js"
 import type { Alert, AlertThresholds } from "@piforge/shared"
 import { api, errorText } from "./api"
 
@@ -67,8 +67,11 @@ export function AlertsPanel() {
   onMount(() => {
     void load()
     void loadThresholds()
+    // Solid discards onMount's return value, so the interval has to be cleared in an onCleanup
+    // hook: returning a disposer kept the 60s poll running after the panel unmounted (e.g. after
+    // logout) for the lifetime of the tab.
     const timer = setInterval(() => void load(), 60_000)
-    return () => clearInterval(timer)
+    onCleanup(() => clearInterval(timer))
   })
 
   return (

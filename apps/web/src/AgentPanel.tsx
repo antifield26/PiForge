@@ -7,6 +7,7 @@ import type {
   PermissionRequest,
 } from "@piforge/shared"
 import { ApiError, api, errorText, randomId } from "./api"
+import { readStoredSession, storeSession } from "./agentSession"
 
 type TimelineItem = {
   id: string
@@ -22,24 +23,6 @@ const KIND_LABELS: Record<TimelineItem["kind"], string> = {
 }
 
 const REFRESH_DEBOUNCE_MS = 300
-const SESSION_STORAGE_KEY = "pf.agentSessionId"
-
-function readStoredSession(): string | null {
-  try {
-    return localStorage.getItem(SESSION_STORAGE_KEY)
-  } catch {
-    return null
-  }
-}
-
-function storeSession(id: string | null) {
-  try {
-    if (id) localStorage.setItem(SESSION_STORAGE_KEY, id)
-    else localStorage.removeItem(SESSION_STORAGE_KEY)
-  } catch {
-    /* private mode */
-  }
-}
 
 export function AgentPanel() {
   const [sessionId, setSessionId] = createSignal<string | null>(null)
@@ -79,6 +62,9 @@ export function AgentPanel() {
       const data = await api<{ items: AgentMessage[] }>(
         `/api/v1/agent/sessions/${encodeURIComponent(id)}/messages`,
       )
+      // The user may have switched sessions while this was in flight; dropping the late response
+      // stops the previous session's timeline from being rendered under the new one.
+      if (id !== sessionId()) return
       setItems(
         (data.items ?? []).map((m) => ({
           id: m.id,
@@ -235,11 +221,30 @@ export function AgentPanel() {
     es.onmessage = (ev) => handleEvent(ev.data)
     es.onerror = () => {
       // EventSource fires ErrorEvent (not MessageEvent) here — there is no .data.
-      // A dropped stream is usually an expired session (401 on reconnect) or network blip;
-      // the api() 401 handler will bounce to the login gate when the session is gone.
+      // A dropped stream is usually an expired session (401 on reconnect) or network blip.
+      // EventSource retries every 3s forever, so probe the session and stop for good when the
+      // server says we are logged out: otherwise a signed-out tab keeps reopening the stream.
       setStatus("事件流断开，重连中…")
+      void probeSession()
     }
   })
+
+  let probing = false
+  async function probeSession() {
+    if (probing) return
+    probing = true
+    try {
+      await api("/api/v1/auth/me")
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) {
+        storeSession(null)
+        setStatus("会话已过期")
+        es?.close()
+      }
+    } finally {
+      probing = false
+    }
+  }
 
   onCleanup(() => {
     if (refreshTimer != null) clearTimeout(refreshTimer)
