@@ -9,6 +9,7 @@
     "dev": "vite"
   },
   "dependencies": {
+    "@piforge/shared": "*",
     "solid-js": "^1.9.15"
   },
   "devDependencies": {

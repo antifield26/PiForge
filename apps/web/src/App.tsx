@@ -1,3 +1,4 @@
+import { createSignal, onMount } from "solid-js"
 import { AgentPanel } from "./AgentPanel"
 import { ConsolePanel } from "./ConsolePanel"
 import { WorkbenchPanel } from "./WorkbenchPanel"
@@ -6,16 +7,63 @@ import { LogsPanel } from "./LogsPanel"
 import { OpsPanel } from "./OpsPanel"
 import { LoginGate } from "./LoginGate"
 import { ServicesPanel } from "./ServicesPanel"
+import { api, errorText, setUnauthorizedHandler } from "./api"
 
 export function App() {
+  const [authed, setAuthed] = createSignal<boolean | null>(null)
+  const [notice, setNotice] = createSignal("")
+  const [loggingOut, setLoggingOut] = createSignal(false)
+
+  setUnauthorizedHandler(() => {
+    if (authed() === true) setNotice("登录已过期，请重新登录")
+    setAuthed(false)
+  })
+
+  onMount(() => {
+    void (async () => {
+      try {
+        await api("/api/v1/auth/me")
+        setAuthed(true)
+      } catch {
+        setAuthed(false)
+      }
+    })()
+  })
+
+  function onAuthed(next: boolean) {
+    if (next) setNotice("")
+    setAuthed(next)
+  }
+
+  async function logout() {
+    setLoggingOut(true)
+    try {
+      await api("/api/v1/auth/logout", { method: "POST", body: "{}" })
+    } catch (e) {
+      setNotice(`退出登录请求失败：${errorText(e)}`)
+    } finally {
+      setLoggingOut(false)
+      setAuthed(false)
+    }
+  }
+
   return (
-    <LoginGate>
+    <LoginGate authed={authed()} notice={notice()} onAuthed={onAuthed}>
       <main class="mx-auto max-w-5xl px-6 py-10">
-        <header class="mb-8">
-          <h1 class="text-2xl font-semibold tracking-tight">PiForge</h1>
-          <p class="mt-1 text-sm text-[var(--pf-grey-700)]">
-            Pi 5 个人工作台 · 树莓派控制台 · Agent 平台
-          </p>
+        <header class="mb-8 flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <h1 class="text-2xl font-semibold tracking-tight">PiForge</h1>
+            <p class="mt-1 text-sm text-[var(--pf-grey-700)]">
+              Pi 5 个人工作台 · 树莓派控制台 · Agent 平台
+            </p>
+          </div>
+          <button
+            class="shrink-0 rounded-lg border border-black/10 bg-white px-3 py-1.5 text-xs text-[var(--pf-grey-700)] disabled:opacity-50"
+            disabled={loggingOut()}
+            onClick={() => void logout()}
+          >
+            {loggingOut() ? "退出中…" : "退出登录"}
+          </button>
         </header>
         <section class="mb-6 grid gap-4 sm:grid-cols-3">
           <NavCard title="个人工作台" desc="待办 / 笔记 / 书签 / 云盘" />

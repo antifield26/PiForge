@@ -1,35 +1,37 @@
-import { createSignal, onMount } from "solid-js"
+import { createSignal, onCleanup, onMount } from "solid-js"
+import type { SystemSnapshot } from "@piforge/shared"
+import { api, errorText } from "./api"
 
-type Snapshot = {
-  tempC: number
-  load1: number
-  memTotalKb: number
-  memAvailableKb: number
-  diskWriteBps: number
-  sdTotalWriteBytes: number
-  throttled: string
-  uptimeSec: number
-}
+const POLL_MS = 5000
 
 export function ConsolePanel() {
-  const [snap, setSnap] = createSignal<Snapshot | null>(null)
+  const [snap, setSnap] = createSignal<SystemSnapshot | null>(null)
   const [err, setErr] = createSignal("")
 
   async function refresh() {
     try {
-      const res = await fetch("/api/v1/console/system", { credentials: "include" })
-      if (!res.ok) throw new Error(String(res.status))
-      setSnap(await res.json())
+      const data = await api<SystemSnapshot>("/api/v1/console/system")
+      setSnap(data)
       setErr("")
     } catch (e) {
-      setErr(String(e))
+      setErr(errorText(e))
     }
   }
 
   onMount(() => {
     void refresh()
-    const t = setInterval(() => void refresh(), 5000)
-    return () => clearInterval(t)
+    // pause the 5s poll while the tab is in the background
+    const timer = setInterval(() => {
+      if (!document.hidden) void refresh()
+    }, POLL_MS)
+    const onVisibility = () => {
+      if (!document.hidden) void refresh()
+    }
+    document.addEventListener("visibilitychange", onVisibility)
+    onCleanup(() => {
+      clearInterval(timer)
+      document.removeEventListener("visibilitychange", onVisibility)
+    })
   })
 
   return (
@@ -41,7 +43,9 @@ export function ConsolePanel() {
         </button>
       </header>
       {err() ? (
-        <p class="text-sm text-red-700">无法读取系统状态: {err()}</p>
+        <p class="text-sm text-red-700" aria-live="polite">
+          无法读取系统状态：{err()}
+        </p>
       ) : snap() ? (
         <dl class="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
           <Stat label="温度" value={`${snap()!.tempC.toFixed(1)} °C`} />
@@ -66,7 +70,7 @@ function Stat(props: { label: string; value: string }) {
   return (
     <div class="rounded-lg bg-[var(--pf-grey-100)] p-3">
       <dt class="text-[10px] uppercase tracking-wide text-[var(--pf-grey-700)]">{props.label}</dt>
-      <dd class="mt-1 font-medium tabular-nums">{props.value}</dd>
+      <dd class="mt-1 break-all font-medium tabular-nums">{props.value}</dd>
     </div>
   )
 }

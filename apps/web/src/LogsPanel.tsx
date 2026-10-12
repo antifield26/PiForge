@@ -1,10 +1,5 @@
 import { createSignal, For, Show } from "solid-js"
-
-async function api<T>(path: string): Promise<T> {
-  const res = await fetch(path, { credentials: "include" })
-  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`)
-  return res.json()
-}
+import { api, errorText } from "./api"
 
 export function LogsPanel() {
   const [unit, setUnit] = createSignal("wb-gateway.service")
@@ -19,10 +14,10 @@ export function LogsPanel() {
       const d = await api<{ lines: string[] }>(
         `/api/v1/console/logs?unit=${encodeURIComponent(unit())}&lines=80`,
       )
-      setLines(d.lines)
+      setLines(d.lines ?? [])
       setErr("")
     } catch (e) {
-      setErr(String(e))
+      setErr(`日志读取失败：${errorText(e)}`)
     } finally {
       setBusy(false)
     }
@@ -32,8 +27,9 @@ export function LogsPanel() {
     try {
       const d = await api<{ count: number; items: string[] }>("/api/v1/console/apt-check")
       setApt(d)
+      setErr("")
     } catch (e) {
-      setErr(String(e))
+      setErr(`apt 检查失败：${errorText(e)}`)
     }
   }
 
@@ -41,7 +37,11 @@ export function LogsPanel() {
     <section class="rounded-xl border border-black/10 bg-white p-4 shadow-sm">
       <header class="mb-3 flex flex-wrap items-center gap-2">
         <h2 class="font-medium">日志与更新</h2>
+        <label class="sr-only" for="pf-log-unit">
+          日志单元
+        </label>
         <select
+          id="pf-log-unit"
           class="rounded-lg border border-black/10 px-2 py-1.5 text-sm"
           value={unit()}
           onChange={(e) => setUnit(e.currentTarget.value)}
@@ -66,7 +66,9 @@ export function LogsPanel() {
         </button>
       </header>
       <Show when={err()}>
-        <p class="mb-2 text-sm text-red-700">{err()}</p>
+        <p class="mb-2 text-sm text-red-700" aria-live="polite">
+          {err()}
+        </p>
       </Show>
       <Show when={apt()}>
         <p class="mb-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
@@ -78,7 +80,7 @@ export function LogsPanel() {
           </For>
         </p>
       </Show>
-      <pre class="max-h-72 overflow-auto rounded-lg bg-[var(--pf-grey-1100)] p-3 font-mono text-xs text-[var(--pf-grey-200)]">
+      <pre class="max-h-72 overflow-auto rounded-lg bg-[var(--pf-grey-1100)] p-3 font-mono text-xs break-all whitespace-pre-wrap text-[var(--pf-grey-200)]">
         {lines().join("\n") || "（暂无日志）"}
       </pre>
     </section>
