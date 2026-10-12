@@ -170,3 +170,38 @@ test("client ip trusts forwarding headers only from loopback peers", () => {
   )
   assert.equal(clientIp(make("::ffff:127.0.0.1", {})), "127.0.0.1")
 })
+
+
+// ---------------------------------------------------------------- alert thresholds
+
+test("alert thresholds round-trip and reject garbage", async () => {
+  const { openDb, getSetting } = await import("../dist/db/index.js")
+  const { getThresholds, setThresholds, raiseAlert } = await import("../dist/modules/console/alerts.js")
+  const db = openDb(":memory:")
+  const defaults = getThresholds(db)
+  assert.ok(defaults.cooldownMinutes >= 1)
+  assert.throws(() => setThresholds(db, { cooldownMinutes: 0 }))
+  const next = setThresholds(db, { memAvailableMb: 512 })
+  assert.equal(next.memAvailableMb, 512)
+  assert.equal(getThresholds(db).memAvailableMb, 512)
+
+  const id1 = raiseAlert(db, {
+    kind: "mem_low",
+    severity: "warning",
+    title: "t",
+    message: "m",
+    dedupeKey: "mem:low",
+    now: 1_000,
+  })
+  const id2 = raiseAlert(db, {
+    kind: "mem_low",
+    severity: "warning",
+    title: "t",
+    message: "m",
+    dedupeKey: "mem:low",
+    now: 1_500,
+  })
+  assert.ok(id1 != null)
+  assert.equal(id2, null, "cooldown suppresses the repeat")
+  db.close()
+})

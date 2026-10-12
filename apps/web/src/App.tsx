@@ -1,5 +1,6 @@
 import { createSignal, onMount } from "solid-js"
 import { AgentPanel } from "./AgentPanel"
+import { AlertsPanel } from "./AlertsPanel"
 import { ConsolePanel } from "./ConsolePanel"
 import { WorkbenchPanel } from "./WorkbenchPanel"
 import { CloudPanel } from "./CloudPanel"
@@ -47,6 +48,15 @@ export function App() {
     }
   }
 
+  async function revokeOthers() {
+    try {
+      await api("/api/v1/auth/sessions/revoke-all", { method: "POST", body: "{}" })
+      setNotice("已登出其他会话")
+    } catch (e) {
+      setNotice(`登出其他会话失败：${errorText(e)}`)
+    }
+  }
+
   return (
     <LoginGate authed={authed()} notice={notice()} onAuthed={onAuthed}>
       <main class="mx-auto max-w-5xl px-6 py-10">
@@ -57,13 +67,21 @@ export function App() {
               Pi 5 个人工作台 · 树莓派控制台 · Agent 平台
             </p>
           </div>
-          <button
-            class="shrink-0 rounded-lg border border-black/10 bg-white px-3 py-1.5 text-xs text-[var(--pf-grey-700)] disabled:opacity-50"
-            disabled={loggingOut()}
-            onClick={() => void logout()}
-          >
-            {loggingOut() ? "退出中…" : "退出登录"}
-          </button>
+          <div class="flex shrink-0 gap-2">
+            <button
+              class="rounded-lg border border-black/10 bg-white px-3 py-1.5 text-xs text-[var(--pf-grey-700)]"
+              onClick={() => void revokeOthers()}
+            >
+              登出其他会话
+            </button>
+            <button
+              class="rounded-lg border border-black/10 bg-white px-3 py-1.5 text-xs text-[var(--pf-grey-700)] disabled:opacity-50"
+              disabled={loggingOut()}
+              onClick={() => void logout()}
+            >
+              {loggingOut() ? "退出中…" : "退出登录"}
+            </button>
+          </div>
         </header>
         <section class="mb-6 grid gap-4 sm:grid-cols-3">
           <NavCard title="个人工作台" desc="待办 / 笔记 / 书签 / 云盘" />
@@ -71,6 +89,7 @@ export function App() {
           <NavCard title="Agent" desc="OpenCode 会话与任务" />
         </section>
         <div class="grid gap-4">
+          <AlertsPanel />
           <WorkbenchPanel />
           <CloudPanel />
           <ConsolePanel />

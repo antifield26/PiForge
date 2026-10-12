@@ -446,3 +446,162 @@ test("non-string confirmToken is treated as missing, not a 500", async (t) => {
   assert.equal(res.statusCode, 202)
   assert.ok(res.json().confirmToken)
 })
+
+
+// ---------------------------------------------------------------- alerts (P3.1/P3.2)
+
+test("alerts list, unread count and mark-read", async (t) => {
+  const { app, cookie, db } = await withApp(t)
+  db.prepare(
+    `INSERT INTO alerts (kind, severity, title, message, dedupe_key, created_at) VALUES (?,?,?,?,?,?)`,
+  ).run("backup_failed", "critical", "备份失败", "test", "backup:failed", Date.now())
+
+  const list = await app.inject({ method: "GET", url: "/api/v1/console/alerts", headers: auth(cookie) })
+  assert.equal(list.statusCode, 200)
+  assert.equal(list.json().items.length, 1)
+  assert.equal(list.json().unread, 1)
+
+  const read = await app.inject({
+    method: "POST",
+    url: "/api/v1/console/alerts/read",
+    headers: auth(cookie),
+    payload: { ids: "all" },
+  })
+  assert.equal(read.statusCode, 200)
+  assert.equal(read.json().unread, 0)
+})
+
+test("alert thresholds reject invalid values and persist valid ones", async (t) => {
+  const { app, cookie } = await withApp(t)
+  const bad = await app.inject({
+    method: "POST",
+    url: "/api/v1/console/alerts/thresholds",
+    headers: auth(cookie),
+    payload: { sdDayWriteBytes: -1 },
+  })
+  assert.equal(bad.statusCode, 400)
+
+  const ok = await app.inject({
+    method: "POST",
+    url: "/api/v1/console/alerts/thresholds",
+    headers: auth(cookie),
+    payload: { sdDayWriteBytes: 1024 * 1024, memAvailableMb: 128, cooldownMinutes: 5 },
+  })
+  assert.equal(ok.statusCode, 200)
+  assert.equal(ok.json().sdDayWriteBytes, 1024 * 1024)
+  assert.equal(ok.json().cooldownMinutes, 5)
+
+  const again = await app.inject({ method: "GET", url: "/api/v1/console/alerts/thresholds", headers: auth(cookie) })
+  assert.equal(again.json().memAvailableMb, 128)
+})
+
+test("alert detectors raise once per cooldown window", async (t) => {
+  const { app, cookie, db } = await withApp(t)
+  const { runDetectors, raiseAlert } = await import("../dist/modules/console/alerts.js")
+  const now = 5_000_000
+  const first = await runDetectors(db, {
+    lastBackupStatus: "failed",
+    sdDayWriteBytes: 0,
+    memAvailableMb: 4096,
+    now,
+  })
+  assert.ok(first.raised.length >= 1)
+  const second = await runDetectors(db, {
+    lastBackupStatus: "failed",
+    sdDayWriteBytes: 0,
+    memAvailableMb: 4096,
+    now: now + 1000,
+  })
+  assert.equal(second.raised.length, 0, "same backup:failed key must be cooled down")
+
+  // A different key still raises
+  const other = raiseAlert(db, {
+    kind: "sd_write_high",
+    severity: "warning",
+    title: "t",
+    message: "m",
+    dedupeKey: "sd:day_write",
+    now: now + 2000,
+  })
+  assert.ok(other != null)
+})
+
+
+// ---------------------------------------------------------------- session management (P3.3)
+
+test("sessions list, revoke one, and revoke-all keep the current session", async (t) => {
+  const { app, cookie, db } = await withApp(t)
+  // a second session for the same user
+  const second = await app.inject({
+    method: "POST",
+    url: "/api/v1/auth/login",
+    payload: { username: "admin", password: "test-password-123" },
+  })
+  assert.equal(second.statusCode, 200)
+  const cookie2 = Array.isArray(second.headers["set-cookie"])
+    ? second.headers["set-cookie"][0]
+    : second.headers["set-cookie"]
+
+  const list = await app.inject({ method: "GET", url: "/api/v1/auth/sessions", headers: auth(cookie) })
+  assert.equal(list.statusCode, 200)
+  assert.ok(list.json().items.length >= 2)
+  assert.ok(list.json().items.some((s) => s.current === true))
+
+  const other = list.json().items.find((s) => !s.current)
+  assert.ok(other)
+  const del = await app.inject({
+    method: "DELETE",
+    url: `/api/v1/auth/sessions/${other.id}`,
+    headers: auth(cookie),
+  })
+  assert.equal(del.statusCode, 200)
+
+  // second cookie is now dead
+  const me2 = await app.inject({ method: "GET", url: "/api/v1/auth/me", headers: auth(cookie2) })
+  assert.equal(me2.statusCode, 401)
+
+  const revoke = await app.inject({
+    method: "POST",
+    url: "/api/v1/auth/sessions/revoke-all",
+    headers: auth(cookie),
+    payload: {},
+  })
+  assert.equal(revoke.statusCode, 200)
+  const list2 = await app.inject({ method: "GET", url: "/api/v1/auth/sessions", headers: auth(cookie) })
+  assert.equal(list2.json().items.length, 1, "only the current session remains")
+  assert.equal(list2.json().items[0].current, true)
+})
+
+test("cannot revoke another user's session", async (t) => {
+  const { app, cookie, db } = await withApp(t)
+  await ensureAdminUser(db, "other", "other-password-123")
+  const otherLogin = await app.inject({
+    method: "POST",
+    url: "/api/v1/auth/login",
+    payload: { username: "other", password: "other-password-123" },
+  })
+  const cookie2 = Array.isArray(otherLogin.headers["set-cookie"])
+    ? otherLogin.headers["set-cookie"][0]
+    : otherLogin.headers["set-cookie"]
+  const list2 = await app.inject({ method: "GET", url: "/api/v1/auth/sessions", headers: auth(cookie2) })
+  const target = list2.json().items[0]
+  const del = await app.inject({
+    method: "DELETE",
+    url: `/api/v1/auth/sessions/${target.id}`,
+    headers: auth(cookie),
+  })
+  assert.equal(del.statusCode, 404, "cross-user revoke must not work")
+  const still = await app.inject({ method: "GET", url: "/api/v1/auth/me", headers: auth(cookie2) })
+  assert.equal(still.statusCode, 200)
+})
+
+test("failed logins are recorded in login_audit", async (t) => {
+  const { app, db } = await withApp(t)
+  await app.inject({
+    method: "POST",
+    url: "/api/v1/auth/login",
+    payload: { username: "admin", password: "wrong" },
+  })
+  const rows = db.prepare("SELECT ok FROM login_audit ORDER BY id DESC LIMIT 1").get()
+  assert.equal(rows.ok, 0)
+})

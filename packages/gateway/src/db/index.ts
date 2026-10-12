@@ -122,11 +122,35 @@ function migrate(db: Db) {
       value TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS alerts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      kind TEXT NOT NULL,
+      severity TEXT NOT NULL,
+      title TEXT NOT NULL,
+      message TEXT NOT NULL,
+      dedupe_key TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      resolved_at INTEGER,
+      read_at INTEGER
+    );
+
+    CREATE TABLE IF NOT EXISTS login_audit (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts INTEGER NOT NULL,
+      username TEXT NOT NULL,
+      ok INTEGER NOT NULL,
+      client_ip TEXT,
+      user_agent TEXT
+    );
+
     CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
     CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
     CREATE INDEX IF NOT EXISTS idx_audit_ts ON service_audit(ts);
     CREATE INDEX IF NOT EXISTS idx_metrics_ts ON metrics_points(ts);
     CREATE INDEX IF NOT EXISTS idx_versions_file ON cloud_file_versions(file_id);
+    CREATE INDEX IF NOT EXISTS idx_alerts_created ON alerts(created_at);
+    CREATE INDEX IF NOT EXISTS idx_alerts_dedupe ON alerts(dedupe_key, created_at);
+    CREATE INDEX IF NOT EXISTS idx_login_audit_ts ON login_audit(ts);
   `)
 
   dropUnusedTables(db)

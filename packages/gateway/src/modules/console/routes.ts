@@ -3,6 +3,16 @@ import { requireAuth } from "../auth/routes.js"
 import { queryMetrics, readSdHealth, readSnapshot, recordMetrics, recordSdHealth } from "./metrics.js"
 import type { MetricKind } from "@piforge/shared"
 import { controlService, listAudit, listServiceStatus } from "./service-control.js"
+import {
+  countUnreadAlerts,
+  deliverAlert,
+  getThresholds,
+  listAlerts,
+  markAlertsRead,
+  raiseAlert,
+  runDetectors,
+  setThresholds,
+} from "./alerts.js"
 import { clientIp } from "../../util/net.js"
 import { checkHeavy, createHeavyLimiter } from "../../auth/ratelimit.js"
 import { clampInt, sendError } from "../../util/validate.js"
@@ -11,6 +21,7 @@ import { runBackup } from "./backup.js"
 
 const FLUSH_MS = 5 * 60 * 1000
 const SAMPLE_MS = 5 * 1000
+const DETECT_MS = 60 * 1000
 const METRIC_KINDS: MetricKind[] = ["cpu", "mem", "temp", "disk_write"]
 // backup.sh / systemctl are process-spawning and SD-heavy.
 const heavy = createHeavyLimiter(10, 60_000)
@@ -19,6 +30,31 @@ export const consoleRoutes: FastifyPluginAsync = async (app) => {
   const pending: Awaited<ReturnType<typeof readSnapshot>>[] = []
   let sampleTimer: ReturnType<typeof setInterval> | null = null
   let flushTimer: ReturnType<typeof setInterval> | null = null
+  let detectTimer: ReturnType<typeof setInterval> | null = null
+
+  async function detectOnce(): Promise<void> {
+    try {
+      const [snap, sd] = await Promise.all([readSnapshot(app.db), readSdHealth(app.db)])
+      const backup = app.db
+        .prepare("SELECT status FROM backup_runs ORDER BY id DESC LIMIT 1")
+        .get() as { status: string } | undefined
+      const result = await runDetectors(app.db, {
+        lastBackupStatus: backup?.status ?? null,
+        sdDayWriteBytes: Math.max(0, sd.dayWriteBytes),
+        memAvailableMb: Math.round(snap.memAvailableKb / 1024),
+      })
+      for (const id of result.raised) {
+        const row = app.db
+          .prepare("SELECT title, message, severity FROM alerts WHERE id = ?")
+          .get(id) as { title: string; message: string; severity: string } | undefined
+        if (row) {
+          void deliverAlert(row).catch((err) => app.log.debug({ err }, "alert webhook failed"))
+        }
+      }
+    } catch (err) {
+      app.log.debug({ err }, "alert detector failed")
+    }
+  }
 
   app.addHook("onReady", async () => {
     sampleTimer = setInterval(() => {
@@ -45,11 +81,15 @@ export const consoleRoutes: FastifyPluginAsync = async (app) => {
       }
     }, FLUSH_MS)
     flushTimer.unref()
+
+    detectTimer = setInterval(() => void detectOnce(), DETECT_MS)
+    detectTimer.unref()
   })
 
   app.addHook("onClose", async () => {
     if (sampleTimer) clearInterval(sampleTimer)
     if (flushTimer) clearInterval(flushTimer)
+    if (detectTimer) clearInterval(detectTimer)
   })
 
   app.get("/system", async (req, reply) => {
@@ -148,8 +188,68 @@ export const consoleRoutes: FastifyPluginAsync = async (app) => {
     }
     const run = await runBackup(app.db, app.config.backupScript)
     if (run.status === "failed") {
+      // Surface a durable alert, not just an HTTP error.
+      const id = raiseAlert(app.db, {
+        kind: "backup_failed",
+        severity: "critical",
+        title: "备份失败",
+        message: run.message ?? "手动备份失败",
+        dedupeKey: `backup:failed:manual:${run.id}`,
+      })
+      if (id != null) {
+        void deliverAlert({ title: "备份失败", message: run.message ?? "手动备份失败", severity: "critical" }).catch(
+          () => undefined,
+        )
+      }
       return reply.code(502).send({ error: { code: "BACKUP_FAILED", message: run.message }, ...run })
     }
     return reply.code(201).send(run)
+  })
+
+  // ---- Alerts (P3.2) ----
+  app.get<{ Querystring: { limit?: string; unread?: string } }>("/alerts", async (req, reply) => {
+    const auth = requireAuth(req)
+    if (!auth) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
+    return {
+      items: listAlerts(app.db, {
+        limit: clampInt(req.query.limit, 50, 1, 200),
+        unreadOnly: req.query.unread === "1" || req.query.unread === "true",
+      }),
+      unread: countUnreadAlerts(app.db),
+    }
+  })
+
+  app.post<{ Body: { ids?: unknown } }>("/alerts/read", async (req, reply) => {
+    const auth = requireAuth(req)
+    if (!auth) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
+    const body = req.body as { ids?: unknown } | undefined
+    let ids: number[] | "all" = "all"
+    if (Array.isArray(body?.ids)) {
+      ids = body.ids.filter((x): x is number => typeof x === "number" && Number.isInteger(x)).slice(0, 200)
+    }
+    const changed = markAlertsRead(app.db, ids)
+    return { ok: true, changed, unread: countUnreadAlerts(app.db) }
+  })
+
+  app.get("/alerts/thresholds", async (req, reply) => {
+    const auth = requireAuth(req)
+    if (!auth) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
+    return getThresholds(app.db)
+  })
+
+  app.post<{ Body: Record<string, unknown> }>("/alerts/thresholds", async (req, reply) => {
+    const auth = requireAuth(req)
+    if (!auth) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
+    try {
+      const body = (req.body ?? {}) as Record<string, unknown>
+      const next = setThresholds(app.db, {
+        sdDayWriteBytes: typeof body.sdDayWriteBytes === "number" ? body.sdDayWriteBytes : undefined,
+        memAvailableMb: typeof body.memAvailableMb === "number" ? body.memAvailableMb : undefined,
+        cooldownMinutes: typeof body.cooldownMinutes === "number" ? body.cooldownMinutes : undefined,
+      })
+      return next
+    } catch (e) {
+      return sendError(reply, 400, "BAD_REQUEST", e instanceof Error ? e.message : "invalid thresholds")
+    }
   })
 }

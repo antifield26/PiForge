@@ -63,3 +63,29 @@ export interface MetricsSummary {
   avg?: number
   last?: number
 }
+
+export type AlertKind = "backup_failed" | "service_down" | "sd_write_high" | "mem_low"
+
+export type AlertSeverity = "info" | "warning" | "critical"
+
+export interface Alert {
+  id: number
+  kind: AlertKind
+  severity: AlertSeverity
+  title: string
+  message: string
+  /** dedupe key: same key is not re-raised within the cooldown window */
+  dedupeKey: string
+  createdAt: number
+  resolvedAt: number | null
+  readAt: number | null
+}
+
+export interface AlertThresholds {
+  /** SD writes per day (bytes) before sd_write_high fires */
+  sdDayWriteBytes: number
+  /** free memory (MB) before mem_low fires */
+  memAvailableMb: number
+  /** minutes to suppress repeat alerts with the same dedupeKey */
+  cooldownMinutes: number
+}

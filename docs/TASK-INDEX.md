@@ -4,7 +4,7 @@
 > 每个任务可在一次工作会话内完成，且验收标准含**实机验证**。
 
 **状态汇总**（最后更新：2026-10-12）：P0、P1 完成；P2.1–P2.3、P2.5–P2.6 done；P2.4 PTY 默认关闭/暂缓。
-2026-10-12 完成一轮全量缺陷修复（FIX-1）；2026-10-13 完成审计问题全量修复（FIX-2），部署布局迁移至 `/opt/piforge` + 双无 sudo 用户，全部实机验证通过。
+2026-10-12 完成一轮全量缺陷修复（FIX-1）；2026-10-13 完成审计问题全量修复（FIX-2）；P3 系列（告警闭环与控制面收口）已立项，部署布局迁移至 `/opt/piforge` + 双无 sudo 用户，全部实机验证通过。
 
 ---
 
@@ -78,6 +78,42 @@
 | P2.4 | 只读 PTY | P2 | abandoned | 安全面大，默认不启用（用户可后续再开） | ARCHITECTURE §3.2 |
 | P2.5 | 移动端适配 | P2 | done | viewport-fit + PWA manifest + icon；面板自适应 | — |
 | P2.6 | 性能与内存报告 | P2 | done | gateway 99MB / opencode 140MB；docs/PERF.md | RESEARCH §8 |
+
+---
+
+
+## P3 — 告警闭环与控制面收口
+
+| 编号 | 标题 | 里程碑 | 状态 | 验收标准 | 关联 |
+|---|---|---|---|---|---|
+| P3.1.1 | alerts 表 + 通知存储 | P3.1 | done | schema 迁移；空库可起 | ARCHITECTURE §5 |
+| P3.1.2 | 规则检测器：备份/进程掉线 | P3.1 | done | 单测注入假事件生成通知 | — |
+| P3.1.3 | 规则检测器：SD 写入/内存阈值 | P3.1 | done | 越界生成通知，可 resolve | — |
+| P3.1.4 | 投递：工作台通知 + 可选 webhook | P3.1 | done | 失败重试一次并记日志 | — |
+| P3.1.5 | 去重冷却 + 实机验证 | P3.1 | in-progress | 同 key N 分钟不重复；实机断 opencode 见通知 | — |
+| P3.2.1 | 阈值写入 settings + 校验 | P3.2 | done | API 可读写；非法值拒绝 | — |
+| P3.2.2 | alerts REST API | P3.2 | done | GET/POST/read；401；分页未读数 | ARCHITECTURE §9 |
+| P3.2.3 | 前端通知铃铛 + 阈值编辑 | P3.2 | done | 未读角标；保存生效 | — |
+| P3.2.4 | 测试 + 实机阈值触发 | P3.2 | in-progress | npm test 全绿 + 实机一条真实通知 | — |
+| P3.3.1 | GET /auth/sessions | P3.3 | done | 仅自身会话；不回 token | — |
+| P3.3.2 | 吊销单会话 + 全部登出 | P3.3 | done | 吊销后 cookie 失效；禁跨用户 | — |
+| P3.3.3 | 会话列表 UI | P3.3 | done | 可见/可踢；当前会话标记 | — |
+| P3.3.4 | 异常登录提示 + 测试 | P3.3 | done | 新 UA/IP 标志；越权测试过 | — |
+| P3.4.1 | 审计查询 API（过滤/分页） | P3.4 | pending | 上限保护；参数校验 | — |
+| P3.4.2 | login_audit 记录 | P3.4 | pending | 成功/失败 + IP + UA 摘要 | — |
+| P3.4.3 | 审计页签 + CSV 导出 | P3.4 | pending | 导出限流；无越权 | — |
+| P3.4.4 | 审计测试 | P3.4 | pending | 401/403/过滤/导出测试全绿 | — |
+| P3.5.1 | docs/OPENCODE-UPGRADE.md | P3.5 | pending | 备份→升级→契约→回滚；版本对照模板 | AGENTS §6 |
+| P3.5.2 | oc-contract 参数化 | P3.5 | pending | 一键可跑；失败非零 | — |
+| P3.5.3 | 升级前快照脚本 | P3.5 | pending | 幂等；校验通过 | — |
+| P3.5.4 | 升级演练记录 | P3.5 | pending | 桌面推演一次并记录差异 | — |
+| P3.6.1 | release-check 脚本 | P3.6 | pending | 本地 verify + 干跑清单 | — |
+| P3.6.2 | 远端门禁：deploy 后强制 e2e | P3.6 | pending | 失败非零退出 | — |
+| P3.6.3 | AGENTS/README 命令序对齐 | P3.6 | pending | 可照抄执行 | AGENTS §5 |
+| P3.7.1 | 备份 API：drill/连续失败 | P3.7 | pending | 与 backup_runs 对齐 | — |
+| P3.7.2 | 备份卡片趋势 + drill 状态 | P3.7 | pending | 状态一眼可读 | — |
+| P3.7.3 | 实机联动告警验证 | P3.7 | pending | 模拟失败进告警 | P3.1 |
+| P3.A | P3 综合出口验收 | P3 | pending | 告警/会话/审计/Playbook/门禁/e2e 全绿 | 本系列 |
 
 ---
 

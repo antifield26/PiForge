@@ -36,6 +36,38 @@ export function revokeSession(db: Db, token: string): void {
   db.prepare("DELETE FROM sessions WHERE token_hash = ?").run(hashToken(token))
 }
 
+export function revokeSessionById(db: Db, id: string, userId: string): boolean {
+  return Number(db.prepare("DELETE FROM sessions WHERE id = ? AND user_id = ?").run(id, userId).changes) > 0
+}
+
+export function revokeAllSessions(db: Db, userId: string, exceptId?: string): number {
+  if (exceptId) {
+    return Number(
+      db.prepare("DELETE FROM sessions WHERE user_id = ? AND id != ?").run(userId, exceptId).changes,
+    )
+  }
+  return Number(db.prepare("DELETE FROM sessions WHERE user_id = ?").run(userId).changes)
+}
+
+export interface SessionSummary {
+  id: string
+  createdAt: number
+  expiresAt: number
+  current: boolean
+}
+
+export function listSessions(db: Db, userId: string, currentSessionId: string, now = Date.now()): SessionSummary[] {
+  const rows = db
+    .prepare("SELECT id, created_at, expires_at FROM sessions WHERE user_id = ? AND expires_at > ? ORDER BY created_at DESC")
+    .all(userId, now) as { id: string; created_at: number; expires_at: number }[]
+  return rows.map((r) => ({
+    id: r.id,
+    createdAt: r.created_at,
+    expiresAt: r.expires_at,
+    current: r.id === currentSessionId,
+  }))
+}
+
 export function purgeExpiredSessions(db: Db): number {
   const res = db.prepare("DELETE FROM sessions WHERE expires_at <= ?").run(Date.now())
   return Number(res.changes)

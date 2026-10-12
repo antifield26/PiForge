@@ -1,7 +1,16 @@
 import type { FastifyPluginAsync, FastifyRequest } from "fastify"
 import { randomUUID } from "node:crypto"
 import { hashPassword, verifyPassword } from "../../auth/password.js"
-import { createSession, findSession, purgeExpiredSessions, revokeSession, SESSION_COOKIE } from "../../auth/session.js"
+import {
+  createSession,
+  findSession,
+  listSessions,
+  purgeExpiredSessions,
+  revokeAllSessions,
+  revokeSession,
+  revokeSessionById,
+  SESSION_COOKIE,
+} from "../../auth/session.js"
 import { createLoginLimiters } from "../../auth/ratelimit.js"
 import type { Db } from "../../db/index.js"
 import { clientIp } from "../../util/net.js"
@@ -49,6 +58,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       await hashPassword(password) // equalize timing with the known-user path
       limiters.ip.record(ip)
       limiters.user.record(username)
+      recordLogin(app.db, username, false, ip, req.headers["user-agent"])
       return sendError(reply, 401, "UNAUTHORIZED", "invalid credentials")
     }
 
@@ -56,11 +66,13 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     if (!ok) {
       limiters.ip.record(ip)
       limiters.user.record(username)
+      recordLogin(app.db, username, false, ip, req.headers["user-agent"])
       return sendError(reply, 401, "UNAUTHORIZED", "invalid credentials")
     }
 
     limiters.user.reset(username)
     const { token, expiresAt } = createSession(app.db, user.id)
+    recordLogin(app.db, username, true, clientIp(req), req.headers["user-agent"])
     reply.setCookie(SESSION_COOKIE, token, {
       httpOnly: true,
       sameSite: "lax",
@@ -87,6 +99,50 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     if (!user) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
     return { id: user.id, username: user.username, createdAt: user.created_at }
   })
+
+  // ---- Session management (P3.3) ----
+  app.get("/sessions", async (req, reply) => {
+    const auth = requireAuth(req)
+    if (!auth) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
+    return { items: listSessions(app.db, auth.userId, auth.sessionId) }
+  })
+
+  app.delete<{ Params: { id: string } }>("/sessions/:id", async (req, reply) => {
+    const auth = requireAuth(req)
+    if (!auth) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
+    const ok = revokeSessionById(app.db, req.params.id, auth.userId)
+    if (!ok) return sendError(reply, 404, "NOT_FOUND", "session not found")
+    if (req.params.id === auth.sessionId) {
+      reply.clearCookie(SESSION_COOKIE, { path: "/" })
+    }
+    return { ok: true }
+  })
+
+  app.post("/sessions/revoke-all", async (req, reply) => {
+    const auth = requireAuth(req)
+    if (!auth) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
+    // Keep the caller's own session so they are not instantly logged out by "revoke others";
+    // use ?all=1 to include the current session too.
+    const includeCurrent = req.query && (req.query as { all?: string }).all === "1"
+    const revoked = revokeAllSessions(app.db, auth.userId, includeCurrent ? undefined : auth.sessionId)
+    if (includeCurrent) reply.clearCookie(SESSION_COOKIE, { path: "/" })
+    return { ok: true, revoked }
+  })
+}
+
+function recordLogin(db: Db, username: string, ok: boolean, ip: string | null, ua: unknown): void {
+  const agent = typeof ua === "string" ? ua.slice(0, 200) : null
+  try {
+    db.prepare("INSERT INTO login_audit (ts, username, ok, client_ip, user_agent) VALUES (?,?,?,?,?)").run(
+      Date.now(),
+      username.slice(0, 64),
+      ok ? 1 : 0,
+      ip,
+      agent,
+    )
+  } catch {
+    /* audit must never break login */
+  }
 }
 
 export function requireAuth(req: FastifyRequest): { userId: string; sessionId: string } | null {

@@ -24,6 +24,8 @@
 
 
 ### Added
+- 2026-10-13 路 **P3.1–P3.3 开工落地**：lerts/login_audit 表；告警规则（备份失败/partial、服务掉线、SD 日写入、内存不足）+ 去重冷却 + 可选 webhook（ALERT_WEBHOOK_URL）；/console/alerts* API 与阈值配置；前端通知面板；会话列表/吊销/登出其他 + login_audit 记录。本地 
+pm run verify 41/41。实机验证（P3.1.5/P3.2.4）待部署后 erify-e2e。
 
 - 2026-10-12 · **测试与验证**：新增 `npm test`（`node:test`，28 项：认证/限速/错误契约/上传与版本/白名单与确认令牌/metrics 写入纪律/SD 计数折叠/SSE 帧映射/客户端 IP 信任）与 `npm run verify`（typecheck+test）；新增 `scripts/verify-e2e.mjs`（实机端到端验证：登录、控制台、上传 3MB、版本回滚、白名单 403、确认令牌、metrics 零写、SSE 心跳、工作区隔离）。
 - 2026-10-12 · **夜间备份**：`deploy/piforge-backup.{service,timer}`（03:15，`Persistent=true`，root 执行，可读 `/etc/piforge` 与两个 `/var/lib` 状态目录）；`scripts/backup-record.mjs` 记录 `backup_runs`；`scripts/deploy-pi.sh` + `scripts/rollback-pi.sh`（幂等迁移与单元回滚）；`scripts/gen-sudoers.mjs` 由 allowlist 生成 sudoers；`scripts/lib/env.sh` 统一凭据读取（不 `source` dotenv、凭据不进 argv、临时文件 0600 且退出即清）。
@@ -96,6 +98,9 @@ pm test / erify-e2e.mjs 覆盖或一次性调试脚本（test-*、debug-*、oc-
 - 2026-10-12 · 6 个重复的 Cloudflare/DNS 一次性脚本迁入 `scripts/legacy/`（含 README 说明），canonical 路径为 `cf-api-dns.sh` + `cf-api-dns.mjs`。
 
 ### Notes
+
+
+- 2026-10-13 路 **P3 立项**：新系列「告警闭环与控制面收口」写入 ROADMAP/TASK-INDEX（约 32 个 0.25d 子任务）。范围：告警采集与阈值面板、会话管理、审计检索、OpenCode 升级 Playbook、发布纪律、备份状态面板。明确不含 `antifield` NOPASSWD 收敛与只读 PTY（维持 abandoned）。
 
 - 2026-10-12 · 本日为评估后的一次性全量修复：本地 `npm run verify`（typecheck + 28 项测试）全绿；实机 `scripts/verify-e2e.mjs` 39/39 全绿；迁移后备份 OK 且恢复演练 PASS；服务控制经生成 sudoers 实测可重启白名单单元。按用户要求，评估报告未落地为独立文档，仅记入本 CHANGELOG。
 - 2026-10-11 · 业务代码自本日起开始（P0.1 起每个任务均有对应提交）。
