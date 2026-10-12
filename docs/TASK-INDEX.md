@@ -113,7 +113,7 @@
 | P3.7.1 | 备份 API：drill/连续失败 | P3.7 | done | 与 backup_runs 对齐 | — |
 | P3.7.2 | 备份卡片趋势 + drill 状态 | P3.7 | done | 状态一眼可读 | — |
 | P3.7.3 | 实机联动告警验证 | P3.7 | done | 模拟失败进告警 | P3.1 |
-| P3.A | P3 综合出口验收 | P3 | pending | 告警/会话/审计/Playbook/门禁/e2e 全绿 | 本系列 |
+| P3.A | P3 综合出口验收 | P3 | done | 告警/会话/审计/Playbook/门禁/e2e 全绿 | 本系列 |
 
 ---
 
