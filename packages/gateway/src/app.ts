@@ -85,6 +85,7 @@ export async function buildApp(config: GatewayConfig, options: BuildOptions = {}
     // SameSite=Lax already blocks cross-site cookie sends; this rejects the request outright
     // when a browser tells us it came from another origin.
     if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") return
+    if (!looksLikeApiUrl(req.url)) return
     const origin = req.headers.origin
     if (!origin) return
     const host = req.headers.host
@@ -94,9 +95,7 @@ export async function buildApp(config: GatewayConfig, options: BuildOptions = {}
       /* malformed origin -> reject below */
     }
     // The API is same-origin only; anything else is a cross-site attempt.
-    if (req.url.startsWith("/api/")) {
-      return reply.code(403).send({ error: { code: "FORBIDDEN", message: "cross-site request rejected" } })
-    }
+    return reply.code(403).send({ error: { code: "FORBIDDEN", message: "cross-site request rejected" } })
   })
 
   app.setErrorHandler((err: unknown, req, reply) => {
@@ -114,14 +113,18 @@ export async function buildApp(config: GatewayConfig, options: BuildOptions = {}
   await app.register(perfRoutes, { prefix: "/api/v1/console" })
   await app.register(agentRoutes, { prefix: "/api/v1/agent" })
 
-  app.get("/api/v1/health", async () => ({
-    ok: true,
-    ts: Date.now(),
-    db: {
-      journal_mode: pragmaInfo(db, "journal_mode"),
-      synchronous: pragmaInfo(db, "synchronous"),
-    },
-  }))
+  app.get("/api/v1/health", async (_req, reply) => {
+    // Unauthenticated, so it must not be cached by an intermediary or the browser.
+    reply.header("cache-control", "no-store")
+    return {
+      ok: true,
+      ts: Date.now(),
+      db: {
+        journal_mode: pragmaInfo(db, "journal_mode"),
+        synchronous: pragmaInfo(db, "synchronous"),
+      },
+    }
+  })
 
   const webDist = resolve(config.webDist)
   const webIndex = existsSync(join(webDist, "index.html"))
@@ -146,6 +149,25 @@ export async function buildApp(config: GatewayConfig, options: BuildOptions = {}
   })
 
   return { app, db }
+}
+
+/**
+ * True when a request targets the JSON API.
+ *
+ * `req.url` is the raw, still percent-encoded target, but the router matches on the decoded
+ * path, so `/%61pi/v1/todos` reaches the API while a naive prefix test on the raw string says
+ * otherwise. Decode first, and treat a malformed escape as API traffic so a broken URL cannot
+ * be used to slip past the cross-site check.
+ */
+function looksLikeApiUrl(rawUrl: string): boolean {
+  const path = rawUrl.split("?")[0] ?? ""
+  let decoded = path
+  try {
+    decoded = decodeURIComponent(path)
+  } catch {
+    return true
+  }
+  return decoded.startsWith("/api/") || path.startsWith("/api/")
 }
 
 function createAdapterFromConfig(config: GatewayConfig): OpenCodeAdapter {

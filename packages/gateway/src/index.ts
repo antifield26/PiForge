@@ -2,10 +2,18 @@ import { buildApp } from "./app.js"
 import { loadConfig } from "./config/index.js"
 import { ensureAdminUser } from "./modules/auth/routes.js"
 import { checkpoint, pragmaInfo } from "./db/index.js"
+import { primeWriteAccumulator } from "./modules/console/metrics.js"
+import { acquireSingleInstanceLock } from "./util/instance-lock.js"
 
 async function main() {
   const config = loadConfig()
+
+  // Two gateways sharing one wb.db each run the 5s sampler, the hourly SD row and the alert
+  // detector, which silently doubles SD writes. A transient `systemd-run` instance left over
+  // from a manual test did exactly that for hours, so refuse to start a second copy.
+  const releaseLock = acquireSingleInstanceLock(config.dbPath)
   const { app, db } = await buildApp(config)
+  primeWriteAccumulator(db)
 
   const username = process.env.ADMIN_USER ?? "admin"
   const password = process.env.ADMIN_PASSWORD
@@ -24,6 +32,7 @@ async function main() {
       checkpoint(db)
       await app.close()
     } finally {
+      releaseLock()
       process.exit(0)
     }
   }

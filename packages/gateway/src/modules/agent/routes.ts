@@ -8,6 +8,30 @@ import { sendError } from "../../util/validate.js"
 const HEARTBEAT_MS = 15_000
 // Prompting launches model work and can spawn tools; keep a stolen session bounded.
 const heavy = createHeavyLimiter(15, 60_000)
+/**
+ * `/events` takes the socket over, so every connection pins a handler, a 15s timer and a file
+ * descriptor. Without a ceiling an authenticated caller can walk the process into EMFILE, at
+ * which point accept() fails for the whole gateway.
+ */
+const MAX_SSE_PER_USER = 4
+const MAX_SSE_TOTAL = 64
+const sseConnections = new Map<string, number>()
+let sseTotal = 0
+
+function acquireSseSlot(userId: string): boolean {
+  const current = sseConnections.get(userId) ?? 0
+  if (current >= MAX_SSE_PER_USER || sseTotal >= MAX_SSE_TOTAL) return false
+  sseConnections.set(userId, current + 1)
+  sseTotal += 1
+  return true
+}
+
+function releaseSseSlot(userId: string): void {
+  const current = sseConnections.get(userId) ?? 0
+  if (current <= 1) sseConnections.delete(userId)
+  else sseConnections.set(userId, current - 1)
+  sseTotal = Math.max(0, sseTotal - 1)
+}
 
 export const agentRoutes: FastifyPluginAsync = async (app) => {
   app.get("/info", async (req, reply) => {
@@ -140,7 +164,18 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
   )
 
   app.get("/events", async (req, reply) => {
-    if (!requireAuth(req)) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
+    const auth = requireAuth(req)
+    if (!auth) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
+    if (!acquireSseSlot(auth.userId)) {
+      reply.header("retry-after", "5")
+      return sendError(reply, 503, "TOO_MANY_STREAMS", "too many concurrent event streams")
+    }
+    let slotHeld = true
+    const releaseSlot = () => {
+      if (!slotHeld) return
+      slotHeld = false
+      releaseSseSlot(auth.userId)
+    }
 
     // Take over the socket: SSE frames are written directly and must not go through
     // Fastify's serializer (which would end the response as soon as the handler returns).
@@ -154,6 +189,8 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
       "x-content-type-options": "nosniff",
       "referrer-policy": "no-referrer",
       "x-frame-options": "DENY",
+      "content-security-policy": "default-src 'none'; frame-ancestors 'none'",
+      "permissions-policy": "geolocation=(), microphone=(), camera=()",
     })
     reply.raw.write("retry: 3000\n\n")
 
@@ -179,6 +216,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
       closed = true
       clearInterval(heartbeat)
       unsubscribe()
+      releaseSlot()
       if (!reply.raw.writableEnded) reply.raw.end()
     }
     req.raw.on("close", close)

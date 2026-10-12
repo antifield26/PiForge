@@ -70,8 +70,13 @@ export function isTodoStatus(value: string): value is "open" | "done" | "archive
 }
 
 /** Escape `%`/`_`/`\` so user input cannot widen a LIKE search. Pair with `ESCAPE '\'`. */
+export function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, (m) => `\\${m}`)
+}
+
+/** Escape and wrap in `%…%` for a substring search. Pair with `ESCAPE '\'`. */
 export function likeContains(value: string): string {
-  return `%${value.replace(/[\\%_]/g, (m) => `\\${m}`)}%`
+  return `%${escapeLike(value)}%`
 }
 
 /** Require a real string body field; anything else is a 400, never a TypeError. */

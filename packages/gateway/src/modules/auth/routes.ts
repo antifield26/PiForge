@@ -44,8 +44,13 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const ip = clientIp(req)
-    const retryAfter = Math.max(limiters.ip.check(ip).retryAfterSec, limiters.user.check(username).retryAfterSec)
-    if (retryAfter > 0) {
+    // Spend the budget BEFORE the scrypt comparison. Checking and recording are separated by an
+    // `await`, so recording afterwards let N concurrent requests all observe an empty bucket and
+    // every one of them reach the password check.
+    const ipVerdict = limiters.ip.consume(ip)
+    const userVerdict = limiters.user.consume(username)
+    if (!ipVerdict.allowed || !userVerdict.allowed) {
+      const retryAfter = Math.max(ipVerdict.retryAfterSec, userVerdict.retryAfterSec)
       reply.header("retry-after", String(retryAfter))
       return sendError(reply, 429, "RATE_LIMITED", `too many attempts, retry in ${retryAfter}s`)
     }
@@ -56,23 +61,21 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
 
     if (!user) {
       await hashPassword(password) // equalize timing with the known-user path
-      limiters.ip.record(ip)
-      limiters.user.record(username)
       recordLogin(app.db, username, false, ip, req.headers["user-agent"])
       return sendError(reply, 401, "UNAUTHORIZED", "invalid credentials")
     }
 
     const ok = await verifyPassword(password, user.password_hash)
     if (!ok) {
-      limiters.ip.record(ip)
-      limiters.user.record(username)
       recordLogin(app.db, username, false, ip, req.headers["user-agent"])
       return sendError(reply, 401, "UNAUTHORIZED", "invalid credentials")
     }
 
-    limiters.user.reset(username)
+    // Legitimate login: hand the username budget back so a user cannot lock themselves out,
+    // but keep the per-IP spend (an attacker rotating usernames is bounded by the IP bucket).
+    limiters.user.undo(username)
     const { token, expiresAt } = createSession(app.db, user.id)
-    recordLogin(app.db, username, true, clientIp(req), req.headers["user-agent"])
+    recordLogin(app.db, username, true, ip, req.headers["user-agent"])
     reply.setCookie(SESSION_COOKIE, token, {
       httpOnly: true,
       sameSite: "lax",

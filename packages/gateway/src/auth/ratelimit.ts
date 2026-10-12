@@ -31,6 +31,10 @@ export function createRateLimiter(opts: RateLimitOptions) {
   function check(key: string, now = Date.now()): RateLimitVerdict {
     const bucket = buckets.get(key)
     if (!bucket) return { allowed: true, retryAfterSec: 0, remaining: opts.limit }
+    // Refresh recency: plain insertion-order eviction would let a flood of one-off keys push
+    // out the bucket of the address currently being throttled.
+    buckets.delete(key)
+    buckets.set(key, bucket)
     prune(bucket, now)
     if (bucket.hits.length < opts.limit) {
       return { allowed: true, retryAfterSec: 0, remaining: opts.limit - bucket.hits.length }
@@ -42,22 +46,50 @@ export function createRateLimiter(opts: RateLimitOptions) {
   function record(key: string, now = Date.now()): void {
     let bucket = buckets.get(key)
     if (!bucket) {
-      if (buckets.size >= maxKeys) {
-        const oldest = buckets.keys().next()
-        if (!oldest.done) buckets.delete(oldest.value)
-      }
+      if (buckets.size >= maxKeys) evictOldest()
       bucket = { hits: [] }
-      buckets.set(key, bucket)
+    } else {
+      // Re-insert so Map order tracks recency (it is also the eviction order).
+      buckets.delete(key)
     }
+    buckets.set(key, bucket)
     prune(bucket, now)
     bucket.hits.push(now)
+  }
+
+  function evictOldest(): void {
+    const oldest = buckets.keys().next()
+    if (!oldest.done) buckets.delete(oldest.value)
   }
 
   function reset(key: string): void {
     buckets.delete(key)
   }
 
-  return { check, record, reset, size: () => buckets.size }
+  /**
+   * Atomically spend one unit of budget. Checking and recording must not be separated by an
+   * `await`, or every concurrent caller sees an empty bucket and they all pass (the login
+   * endpoint used to record only after the scrypt comparison completed).
+   */
+  function consume(key: string, now = Date.now()): RateLimitVerdict {
+    const before = check(key, now)
+    if (!before.allowed) return before
+    record(key, now)
+    return { allowed: true, retryAfterSec: 0, remaining: before.remaining - 1 }
+  }
+
+  /**
+   * Give one unit back, used when the attempt turns out to be legitimate (a successful login
+   * should not eat the budget). Never drops a bucket below zero.
+   */
+  function undo(key: string): void {
+    const bucket = buckets.get(key)
+    if (!bucket) return
+    if (bucket.hits.length > 0) bucket.hits.pop()
+    if (bucket.hits.length === 0) buckets.delete(key)
+  }
+
+  return { check, record, consume, undo, reset, size: () => buckets.size }
 }
 
 export type RateLimiter = ReturnType<typeof createRateLimiter>
@@ -87,8 +119,7 @@ export function checkHeavy(
   userId: string,
   now = Date.now(),
 ): { allowed: boolean; retryAfterSec: number } {
-  const verdict = limiter.check(userId, now)
+  const verdict = limiter.consume(userId, now)
   if (!verdict.allowed) return { allowed: false, retryAfterSec: verdict.retryAfterSec }
-  limiter.record(userId, now)
   return { allowed: true, retryAfterSec: 0 }
 }
