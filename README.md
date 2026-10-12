@@ -45,15 +45,17 @@ npm run build
 rsync -az --delete --exclude node_modules --exclude .git --exclude opencode --exclude data \
   ./ antifield@169.254.77.10:/home/antifield/piforge/
 ssh antifield@169.254.77.10 'bash /home/antifield/piforge/scripts/deploy-pi.sh'
-# 3. 实机端到端验证
-ssh antifield@169.254.77.10 'sudo node /opt/piforge/scripts/verify-e2e.mjs'
 
-# 3. 访问
-# 公网：https://cloud.antifield.work （密码登录）
+# 3. 实机端到端验证（另含 verify-fixes.mjs 覆盖 FIX-3 的修复项）
+ssh antifield@169.254.77.10 'sudo node /opt/piforge/scripts/verify-e2e.mjs'
+ssh antifield@169.254.77.10 'sudo node /opt/piforge/scripts/verify-fixes.mjs'
+
+# 4. 访问
 # 本地：http://127.0.0.1:8787
+# 公网：经 Cloudflare Tunnel 映射的域名（当前入口不可用，见下）
 ```
 
-备份：Pi 本地 `/var/lib/piforge/backups/piforge`（每晚 03:15）→ Windows `D:\PiBackUp`（`scripts/backup-pull.ps1`）。
+备份：Pi 本地 `/var/lib/piforge/backups/piforge`（每晚 03:15）→ Windows `D:\PiBackUp`（`scripts/backup-pull.ps1`）。NAS 目标仍未提供，备份全部落在 Pi 本地盘。
 
 阅读入口：`docs/RESEARCH.md`（实测调研）与 `docs/TASK-INDEX.md`（任务事实源）。
 
@@ -75,7 +77,7 @@ ssh antifield@169.254.77.10 'sudo node /opt/piforge/scripts/verify-e2e.mjs'
 - 公网仅 Cloudflare Tunnel + 内置密码登录
 - systemd 白名单控制，操作全审计
 - API Key 只存 OpenCode 本地配置，不经前端
-- 每晚备份至 NAS，含校验与恢复演练
+- 备份至 Pi 本地盘并拉取到 Windows `D:\PiBackUp`，含 SHA256 校验与恢复演练（NAS 目标尚未提供）
 
 ## 许可
 

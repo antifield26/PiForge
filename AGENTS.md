@@ -70,7 +70,7 @@ npm install
 # 类型检查 / 构建（shared → gateway → web）
 npm run build
 
-# 全量验证：typecheck + node:test（28 项，含上传/版本/限速/白名单/metrics 写入纪律）
+# 全量验证：typecheck + node:test（64 项，含上传/版本/限速原子性/跨用户隔离/白名单/metrics 写入纪律/保留策略/SSE 上限/单实例锁）
 npm run verify
 ```
 
@@ -89,6 +89,9 @@ ssh antifield@169.254.77.10 'bash ~/piforge/scripts/deploy-pi.sh'
 
 # 3) 端到端实机验证（以 root 读取 /etc/piforge/gateway.env 登录；不打印任何密钥）
 ssh antifield@169.254.77.10 'sudo node /opt/piforge/scripts/verify-e2e.mjs'
+
+# 3b) 修复项实机验证（CSRF 编码绕过、限速原子性、并发同名上传、只读路径、导出截断标志、单实例锁）
+ssh antifield@169.254.77.10 'sudo node /opt/piforge/scripts/verify-fixes.mjs'
 
 # 4) 状态
 ssh antifield@169.254.77.10 'systemctl --no-pager status wb-gateway opencode-serve piforge-backup.timer'
@@ -146,6 +149,7 @@ ssh antifield@169.254.77.10 'bash /opt/piforge/scripts/rollback-pi.sh'
 
 - [ ] SSH 可达；`systemctl is-active wb-gateway opencode-serve piforge-backup.timer` 全为 `active`
 - [ ] `sudo node /opt/piforge/scripts/verify-e2e.mjs` 全绿（登录、控制台、3MB 上传与版本回滚、白名单 403、确认令牌、metrics 零写、SSE 心跳、工作区隔离）
+- [ ] `sudo node /opt/piforge/scripts/verify-fixes.mjs` 全绿（CSRF 编码绕过被拒、限速原子性、并发同名上传单行、只读路径不写库、导出截断标志、单实例锁）
 - [ ] `sudo /opt/piforge/scripts/restore-drill.sh` 输出 PASS
 - [ ] 外网经 Cloudflare + 密码登录成功
 - [ ] `ss -lntp` 无新增入站端口（网关 8787 与 OpenCode 4096 仅绑 127.0.0.1）

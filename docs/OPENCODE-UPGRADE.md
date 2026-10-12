@@ -22,8 +22,10 @@
 # 1) 当前版本与状态
 ssh antifield@169.254.77.10
 systemctl is-active opencode-serve
-curl -s -u opencode:$(sudo grep '^OPENCODE_PASSWORD=' /etc/piforge/opencode.env | cut -d= -f2-) \
-  http://127.0.0.1:4096/api/info
+# 口令不进 argv：`curl -u opencode:…` 对 ps 与 /proc/*/cmdline 可见。让 curl 从 stdin 读
+# --config，口令只经过管道，源文件仍是 root-only 的 /etc/piforge/opencode.env。
+sudo awk '/^OPENCODE_PASSWORD=/{sub(/^OPENCODE_PASSWORD=/,""); print "user = \"opencode:" $0 "\""}' \
+  /etc/piforge/opencode.env | curl -sS --config - http://127.0.0.1:4096/api/info
 
 # 2) 跑当前契约（必须先绿，否则先修再升）
 sudo node /opt/piforge/scripts/oc-contract.mjs
@@ -33,7 +35,7 @@ sudo bash /opt/piforge/scripts/backup.sh
 sudo bash /opt/piforge/scripts/restore-drill.sh
 ```
 
-退出标准：契约全绿 + restore-drill PASS。
+退出标准：契约全绿 + restore-drill PASS（默认只验最新一份，`--all` 逐份验全部）。
 
 ---
 
@@ -55,12 +57,19 @@ sudo bash /opt/piforge/scripts/oc-snapshot.sh
 
 ```bash
 # A. 官方脚本（装到当前用户 ~/.opencode/bin —— 对 piforge-oc 要求先切到该用户家目录）
-sudo -u piforge-oc -H bash -c 'curl -fsSL https://opencode.ai/v2/install | bash'
+#    ⚠️ `curl -fsSL <url> | bash` 没有任何校验：下载内容被篡改（CDN/中间人/上游被投毒）即等于
+#    以 piforge-oc 身份直接执行任意代码。要用官方便捷脚本，至少先落盘、与官方公布的 SHA256
+#    逐字节比对后再执行：
+curl -fsSLo /tmp/opencode-install.sh https://opencode.ai/v2/install
+sha256sum /tmp/opencode-install.sh        # 与官网发布页公布的校验值比对，不一致就停手
+sudo -u piforge-oc -H bash /tmp/opencode-install.sh
+rm -f /tmp/opencode-install.sh
 
-# B. 发布包（推荐可控）
-# 下载 opencode-linux-arm64.tar.gz → 解压到 /var/lib/piforge-oc/.opencode/bin/
+# B. 发布包（推荐可控：版本可锁、内容可校验）
+#   下载 opencode-linux-arm64.tar.gz 与官方 SHA256SUMS → `sha256sum -c` 通过 → 解压到
+#   /var/lib/piforge-oc/.opencode/bin/（旧二进制先由 oc-snapshot.sh 留档，见 §5 回滚）
 sudo systemctl stop opencode-serve
-# …替换二进制后
+# …校验并替换二进制后
 sudo chown -R piforge-oc:piforge-oc /var/lib/piforge-oc
 sudo systemctl start opencode-serve
 ```

@@ -117,9 +117,11 @@ Adapter 订阅 /api/event（单一上游连接）→ 网关 SSE /api/v1/agent/ev
 
 ```
 每 5s: 读 /proc/loadavg, meminfo, diskstats, vcgencmd → 内存缓冲（上限 720 点）
-每 5min: 批量 INSERT metrics_points；写入 sd_health（按小时一行）；清理超过保留期的行
-GET /console/system: 只读（不写库），避免轮询放大 SD 写入
-保留期：METRICS_RETENTION_DAYS（默认 30 天）
+每 5min: 批量 INSERT metrics_points；折叠 SD 写入计数并写 sd_health（按小时一行）；
+         清理超过保留期的行（metrics / sd_health / 审计 / 告警 / 备份记录）
+GET /console/system、/console/sd、/console/perf: 只读（完全不写库），避免轮询放大 SD 写入；
+         日写入速率由 5min flush 计算并缓存在内存（进程内 `dayWriteCache`）
+保留期：METRICS_RETENTION_DAYS（默认 30 天）、AUDIT_RETENTION_DAYS（默认 180 天）
 ```
 
 SD 写入量：`/proc/diskstats` 计数器是「本次开机以来」，因此持久化累计基线（`settings.sd_write_accum` / `sd_write_boot`）在重启时折叠，UI 的 `totalWriteBytes` 才是跨重启累计值。
@@ -143,23 +145,25 @@ piforge-backup.timer(03:15, Persistent) → piforge-backup.service(root, oneshot
 
 ## 5. 数据库 Schema（wb.db）
 
-SQLite，`journal_mode=WAL`、`synchronous=NORMAL`、`foreign_keys=ON`、`busy_timeout=5000`。
+SQLite，`journal_mode=WAL`、`synchronous=NORMAL`、`foreign_keys=ON`、`busy_timeout=5000`（先设 timeout 再切 WAL，否则首个写语句在并发下会立刻 locked）。
+
+**schema 版本化**：`PRAGMA user_version` 记录版本，`db/index.ts` 的 `MIGRATIONS` 按序执行（索引 N 把版本从 N 推到 N+1），迁移前会拒绝"库版本高于代码"的情况。当前 v1 = 去重 `(user_id, path)` + 建唯一索引。
 
 | 表 | 用途 | 备注 |
 |---|---|---|
-| `users` | 账号（单用户） | `password_hash` = `scrypt$N$r$p$salt$hash` |
+| `users` | 账号（单用户） | `password_hash` = `scrypt$N$r$p$salt$hash`（校验时拒绝异常 N/r/p，避免被坏行拖垮进程） |
 | `sessions` | 会话 | 只存 `token_hash`；每小时清理过期行 |
 | `todos` / `notes` / `bookmarks` | 工作台 | 均带 `user_id` 隔离；status/tags/URL 有校验 |
-| `cloud_files` | 云盘文件 | `storage_key`；同名覆盖产生版本 |
-| `cloud_file_versions` | 版本历史 | 保存**覆盖前**的内容（独立文件），单文件上限 10 份，可下载 |
-| `metrics_points` | 监控点 | `PRIMARY KEY(ts,kind) WITHOUT ROWID`，默认保留 30 天 |
-| `sd_health` | SD 寿命历史 | 每小时一行，`total_write_bytes` 为跨重启累计 |
-| `service_audit` | 服务控制审计 | 含拒绝记录与客户端 IP |
-| `backup_runs` | 备份历史 | `ok` / `partial` / `failed` |
-| `settings` | 键值 | SD 写入累计/速率基线等运行时状态 |
+| `cloud_files` | 云盘文件 | `UNIQUE(user_id, path)`（v1）；`storage_key`；同名覆盖原地更新行并产生版本 |
+| `cloud_file_versions` | 版本历史 | 保存**覆盖前**的内容（独立文件），单文件上限 10 份，按 `created_at DESC, rowid DESC` 裁剪（保留最新），可下载 |
+| `metrics_points` | 监控点 | `PRIMARY KEY(ts,kind) WITHOUT ROWID`，默认保留 30 天；`/console/metrics*` 返回 `total`/`truncated` 避免静默截断 |
+| `sd_health` | SD 寿命历史 | 每小时一行；`total_write_bytes` 由 `settings.sd_write_accum`（跨重启进位）+ `/proc/diskstats` 当次开机计数组成 |
+| `service_audit` / `login_audit` / `alerts` / `backup_runs` | 审计与告警 | 默认保留 `AUDIT_RETENTION_DAYS`（180 天），由 5 分钟 flush 一并清理 |
+| `settings` | 键值 | SD 写入累计/速率基线、告警阈值、演练结果等运行时状态；**只由 flush/写入路径修改**，只读端点不写库 |
 
-> 已移除：`agent_tasks`（P0 建表但从未读写；启动时若为空则自动删除）。
+> 已移除：`agent_tasks`（P0 建表但从未读写；启动时经 sqlite_master 判定 + 事务删除）。
 > OpenCode 自有 SQLite 位于 `/var/lib/piforge-oc/.local/share/opencode/`，与 wb.db 分离，互不迁移。
+> 单实例：启动时在数据目录写 `gateway.lock`（pidfile），已有存活实例则拒绝启动——两个实例共用 wb.db 会让采样与 SD 写入翻倍。
 
 ---
 
@@ -172,8 +176,8 @@ SQLite，`journal_mode=WAL`、`synchronous=NORMAL`、`foreign_keys=ON`、`busy_t
 | 密码哈希 | scrypt(N=16384, r=8, p=1) + 16B 随机盐；未知用户也做一次哈希以均衡时序 |
 | 会话 | 随机 32B 令牌，库中只存 SHA-256；httpOnly + SameSite=Lax + Secure(生产)，TTL 7 天；登出即吊销 |
 | 会话清理 | 每小时删除过期行（`purgeExpiredSessions`） |
-| 登录限速 | IP 与用户名双滑动窗口（默认 10/5 次每 5 分钟），超限 429 + `Retry-After` |
-| CSRF | SameSite=Lax + 写方法 Origin 校验（非 GET/HEAD/OPTIONS 且 Origin 与 Host 不符 → 403） |
+| 登录限速 | IP 与用户名双滑动窗口（默认 10/5 次每 5 分钟），超限 429 + `Retry-After`；**原子扣减**（`consume()` 在 `await verifyPassword` 之前完成，避免并发全部通过）；成功登录归还用户名预算但保留 IP 预算；限速表按最近使用淘汰，防止新键洪水重置被限速的桶 |
+| CSRF | SameSite=Lax + 写方法 Origin 校验（非 GET/HEAD/OPTIONS 且 Origin 与 Host 不符 → 403）；路径判定基于**解码后**的 pathname（原始 `req.url` 前缀判断可被 `/%61pi/...` 绕过） |
 | 错误契约 | 统一 `{error:{code,message}}`；畸形 JSON=400，超限=413，非法类型=415；5xx 不泄漏内部信息 |
 | 响应头 | CSP、`X-Content-Type-Options`、`X-Frame-Options: DENY`、`Referrer-Policy`、`Permissions-Policy` |
 | 启动校验 | 生产环境缺少 `SESSION_SECRET` / `OPENCODE_PASSWORD` 直接启动失败（不回落到开发默认值） |
