@@ -4,6 +4,9 @@
 
 ## [Unreleased]
 
+### Added
+
+- 2026-10-13 路 **规划落地（文档）**：① **FIX-4 审计收尾与运维双账号** 立项（TASK-INDEX）：文档测试数/默认 backupScript 路径/unit 注释路径/Agent 写操作限速/登录限速 key 归一/notFound 解码判定/4xx 消息收敛/release-check 供应链，以及 **FIX-4.9 双账号**——新建运维账号 **`piforge`**（受限 sudo），`antifield` 过渡后取消 `NOPASSWD: ALL`，含锁死自救演练与 `sudo -n -l` 对照；FIX-4.10 清理遗留 `workbench` sudoers。② **P4 运行时可解释与发布加固** 立项（ROADMAP/TASK-INDEX）：写入归因、可选归因阈值、cgroup 限制生效检测、公网入口恢复手册、安全头红线、前端冒烟、备份失败闭环再演。③ ARCHITECTURE 新增 **ADR-9** 与 §6.2 运维双账号目标态。原 P4.1 权限收敛并入 FIX-4，不在 P4 重复立项。
 
 ### Security
 

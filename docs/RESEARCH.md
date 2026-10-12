@@ -15,7 +15,7 @@
 | CPU | 4 核，Revision `d04170` | Pi 5 8GB；当前频率 2.4 GHz |
 | 内存 | 总 7.9 GiB，可用约 4.8 GiB | 含 zram 2 GiB swap |
 | 系统盘 | `/dev/mmcblk0p2` 59G ext4，已用 27G (48%) | 另有 `/boot/firmware` 512M vfat |
-| 用户 | `antifield` (uid=1000)，组含 sudo/gpio/i2c/spi | 登录用户（服务已拆到 piforge-gw / piforge-oc）；sudo 为 NOPASSWD: ALL |
+| 用户 | `antifield` (uid=1000)，组含 sudo/gpio/i2c/spi | 登录用户（服务已拆到 piforge-gw / piforge-oc）；sudo 为 NOPASSWD: ALL（**FIX-4.9 目标态：改为双账号 `piforge` 受限运维**） |
 | 温度（空载） | 50.5 °C，`throttled=0x0` | 无过热降频 |
 | 负载（空载） | load average 0.00 / 0.00 / 0.06 | 11h uptime |
 
@@ -222,7 +222,7 @@ T1 mmcblk0p2 sectors_written = 6162800   (2026-10-11 20:15:55)
 |---|---|
 | D-Bus | `busctl` 可用，`org.freedesktop.systemd1` 正常响应 `ListUnits` |
 | polkit | `org.freedesktop.systemd1.manage-units` 默认 `auth_admin` / `auth_admin_keep` |
-| sudo | `antifield` 具有 `(ALL) NOPASSWD: ALL` |
+| sudo | `antifield` 具有 `(ALL) NOPASSWD: ALL`（过渡态；FIX-4.9 后运维提权收敛到 `piforge`） |
 | polkit rules.d | 空（无自定义规则） |
 
 **方案评估**：
@@ -231,7 +231,7 @@ T1 mmcblk0p2 sectors_written = 6162800   (2026-10-11 20:15:55)
 2. **polkit 自定义规则**：允许特定 user/group 对指定 unit 调 `manage-units`，无需 sudo；更细粒度，配置稍复杂。
 3. **两者皆审计**：操作写入工作台库 `audit_log`（journald 为 volatile，持久审计不依赖 journald）。
 
-**注意**：`antifield` 为唯一用户（用户决策：不新建 piwork）。systemd 服务现以专用用户 `piforge-gw` / `piforge-oc` 运行；白名单 systemd + 审计仍强制执行以限制控制面。
+**注意**：`antifield` 历史上为唯一用户（旧决策：不新建 piwork）。**2026-10-13 起改为双账号方案**：新建运维账号 `piforge`（受限 sudo），`antifield` 过渡后取消 `NOPASSWD: ALL`（见 ARCHITECTURE ADR-9 / TASK-INDEX FIX-4.9）。systemd 服务仍以专用用户 `piforge-gw` / `piforge-oc` 运行；白名单 systemd + 审计仍强制执行以限制控制面。
 
 ---
 
@@ -280,7 +280,7 @@ T1 mmcblk0p2 sectors_written = 6162800   (2026-10-11 20:15:55)
 | 5 | SD 无健康接口 | 写入量+速率+日历寿命估算；告警阈值可配 |
 | 6 | 异地副本拉取失败 | Pi 本地备份+校验；Windows 拉取脚本失败告警 |
 | 7 | cloudflared 偶发 TLS 超时 | 已自动重试；网关侧做健康检查与状态展示 |
-| 8 | `antifield` NOPASSWD ALL | 唯一用户决策已接受；白名单 systemd + 审计约束控制面 |
+| 8 | `antifield` NOPASSWD ALL | **已不接受为终态**（2026-10-13）：FIX-4.9 双账号 `piforge` 收敛中；完成前仍为现实风险 |
 | 9 | Minecraft 抢内存/IO | 内存预算按共存校准；监控写入与 OpenCode 会话限额 |
 
 ---

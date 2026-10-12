@@ -189,8 +189,10 @@ SQLite，`journal_mode=WAL`、`synchronous=NORMAL`、`foreign_keys=ON`、`busy_t
 | `wb-gateway.service` | `piforge-gw` | 无 sudo 组；仅 `/etc/sudoers.d/piforge-gw` 中的白名单 systemctl 条目；`StateDirectory=/var/lib/piforge`；`ProtectSystem=strict`、`ProtectHome=read-only`、`PrivateTmp`、`UMask=0077` |
 | `opencode-serve.service` | `piforge-oc` | **无任何 sudo**；`WorkingDirectory=/var/lib/piforge-oc/workspace`（工作区隔离）；`ProtectSystem=strict` + `ReadWritePaths=/var/lib/piforge-oc`、`ProtectHome=true`、`NoNewPrivileges=true`、`MemoryMax=1500M` |
 | `piforge-backup.service` | root（oneshot） | 需要读两处 `/var/lib` 与 `/etc/piforge` 密钥 |
+| **人类运维（目标态）** | **`piforge`** | 受限 sudo（部署 `/opt`、备份、改密、白名单 systemctl 诊断）；**不得** `NOPASSWD: ALL`；细则见 ADR-9 / FIX-4.9 |
+| 人类登录（过渡） | `antifield` | FIX-4.9 完成后取消 `NOPASSWD: ALL`；可保留 SSH 登录，提权走 `piforge` 或密码 sudo |
 
-- 代码运行时位于 `/opt/piforge`（root:root，服务用户只读）；`/home/antifield` 为 0700，服务用户不依赖它。
+- 代码运行时位于 `/opt/piforge`（root:root，服务用户只读）；人类家目录为 0700，服务用户不依赖它。
 - **OpenCode 隔离**：只绑 `127.0.0.1:4096`，网关用服务端凭据（Basic）调用；密码只存 `/etc/piforge/opencode.env`（0640 root:piforge-oc，经 `EnvironmentFile` 注入——**不得**用 `Environment=`，否则 `systemctl show -p Environment` 对任何本地用户可见）。
 - **permission 策略**：`/var/lib/piforge-oc/.config/opencode/opencode.json` 显式 `edit/write/bash/webfetch = ask`，由面板审批。
 - **API Key**：仅存 OpenCode 本地配置；禁止入库/日志/文档/前端。
@@ -306,3 +308,6 @@ GET    /api/v1/agent/events          # SSE（无名 data 帧 + 15s 心跳注释�
 | ADR-6 | 白名单 systemd + 专用用户 | 最小权限 |
 | ADR-7 | 网关/Agent 分用户，网关只读代码（`/opt`） | Agent 无法提权；代码不被运行时改写 |
 | ADR-8 | 备份脚本失败即非零退出，不完整标记 `partial` | 杜绝"假绿"备份 |
+| ADR-9 | 运维双账号：新建 `piforge` 承担受限运维（部署/备份/改密），`antifield` 取消 `NOPASSWD: ALL` | 人类运维面与服务面分离；SSH 即 root 的爆炸半径下降；服务账号 `piforge-gw`/`piforge-oc` 不变 |
+
+> ADR-9 于 2026-10-13 拍板（用户指定双账号，运维用户命名 `piforge`），实现见 TASK-INDEX **FIX-4.9**。
