@@ -126,6 +126,32 @@ piforge_login_body() {
 }
 
 # ---------------------------------------------------------------------------
+# HTTP checks
+# ---------------------------------------------------------------------------
+
+# Fetch a URL and require an exact HTTP status code; the body is printed so the caller's log
+# still shows what the endpoint answered. Plain `curl -sS` exits 0 on 4xx/5xx, so a check that
+# only looks at the exit code reports success for an error page (a proxy's 502, a login that
+# stopped working). Must not be used in a command substitution.
+# Usage: piforge_http_expect <expected-code> <curl args...> <url>
+piforge_http_expect() {
+  local want="$1" code
+  shift
+  piforge_tmpfile
+  if ! code=$(curl -sS -m "${PIFORGE_HTTP_TIMEOUT:-20}" -o "$PIFORGE_TMPFILE" -w '%{http_code}' "$@"); then
+    printf '[http] FAIL: curl could not complete the request (expected HTTP %s)\n' "$want" >&2
+    return 1
+  fi
+  cat "$PIFORGE_TMPFILE"
+  printf '\n[http] HTTP %s (expected %s)\n' "$code" "$want"
+  if [[ "$code" != "$want" ]]; then
+    printf '[http] FAIL: HTTP %s, expected %s\n' "$code" "$want" >&2
+    return 1
+  fi
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # Temp files
 # ---------------------------------------------------------------------------
 

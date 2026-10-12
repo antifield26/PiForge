@@ -20,6 +20,17 @@ const login = await fetch(`${BASE}/api/v1/auth/login`, {
   headers: { "content-type": "application/json" },
   body: JSON.stringify({ username: get("ADMIN_USER") ?? "admin", password: get("ADMIN_PASSWORD") }),
 })
+// A 429 here (the login limiter is 10/IP/5min and repeated acceptance runs share one IP) used to
+// surface as `Cannot read properties of null` three lines later, which reads like a code defect
+// instead of "wait and retry". Report it as what it is.
+if (!login.ok) {
+  const retry = login.headers.get("retry-after")
+  console.error(
+    `login failed: HTTP ${login.status}${retry ? ` (rate limited, retry after ${retry}s)` : ""} — ` +
+      `wait for the login window to clear and re-run`,
+  )
+  process.exit(2)
+}
 const cookie = login.headers.get("set-cookie").split(";")[0]
 
 async function api(path) {

@@ -4,6 +4,8 @@
 # Credentials: read from gateway.env through lib/env.sh (never sourced, so nothing is
 # exported into curl's environment), login body is a 0600 --data @file, and the session
 # cookie jar is a 0600 mktemp removed on exit instead of a predictable /tmp path.
+# Every request goes through piforge_http_expect: without an explicit status check `curl -sS`
+# exits 0 on a 4xx/5xx, so an edge error page used to be printed as if the check had passed.
 set -euo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -35,19 +37,18 @@ printf '%s' "$ADMIN_PASSWORD" | piforge_login_body "$ADMIN_USER" > "$LOGIN_BODY"
 read -r -a edge_ips <<<"$EDGE_IPS"
 for ip in "${edge_ips[@]}"; do
   [[ -n "$ip" ]] || continue
-  echo "=== via $ip ==="
-  curl -sS -m 20 --resolve "$HOST:443:$ip" \
-    -w "\nHTTP %{http_code}\n" "https://$HOST/api/v1/health" || true
+  echo "=== health via $ip ==="
+  piforge_http_expect 200 --resolve "$HOST:443:$ip" "https://$HOST/api/v1/health"
 done
 
 echo "=== login via resolve ($IP) ==="
-curl -sS -m 20 --resolve "$HOST:443:$IP" \
+piforge_http_expect 200 --resolve "$HOST:443:$IP" \
   -c "$JAR" \
   -H 'content-type: application/json' \
   --data @"$LOGIN_BODY" \
   "https://$HOST/api/v1/auth/login"
-echo
-curl -sS -m 20 --resolve "$HOST:443:$IP" \
-  -b "$JAR" \
-  "https://$HOST/api/v1/console/system"
-echo
+
+echo "=== console via resolve ($IP) ==="
+piforge_http_expect 200 --resolve "$HOST:443:$IP" -b "$JAR" "https://$HOST/api/v1/console/system"
+
+echo "=== cf-public-e2e OK — health, login and console answered 200 via $HOST ==="

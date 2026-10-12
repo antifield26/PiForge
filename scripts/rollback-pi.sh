@@ -115,11 +115,17 @@ if [[ -f "$GW_HOME/wb.db" && ! -f "$LEGACY_DATA/wb.db" ]]; then
 [rollback]   sudo chown -R antifield:antifield $LEGACY_DATA
 [rollback]
 [rollback]   # only if the restored units still use the old paths:
+[rollback]   sudo install -d -m 0755 -o antifield -g antifield /home/antifield/.local/state
 [rollback]   sudo mv $CONF/gateway.env /home/antifield/piforge/gateway.env
+[rollback]   # the old layout runs the gateway as antifield: without this chown the 0640
+[rollback]   # root:piforge-gw file is unreadable and the service starts without its secrets
+[rollback]   sudo chown antifield:antifield /home/antifield/piforge/gateway.env
+[rollback]   sudo chmod 0600 /home/antifield/piforge/gateway.env
 [rollback]   sudo mv $OC_HOME/.opencode /home/antifield/.opencode
 [rollback]   sudo mv $OC_HOME/.config/opencode /home/antifield/.config/opencode
 [rollback]   sudo mv $OC_HOME/.local/share/opencode /home/antifield/.local/share/opencode
-[rollback]   sudo chown -R antifield:antifield /home/antifield/.opencode /home/antifield/.config/opencode /home/antifield/.local/share/opencode
+[rollback]   sudo mv $OC_HOME/.local/state/opencode /home/antifield/.local/state/opencode
+[rollback]   sudo chown -R antifield:antifield /home/antifield/.opencode /home/antifield/.config/opencode /home/antifield/.local/share/opencode /home/antifield/.local/state/opencode
 [rollback]
 [rollback]   # the gateway no longer needs root once it runs as antifield again:
 [rollback]   sudo rm -f /etc/sudoers.d/piforge-gw
@@ -135,4 +141,6 @@ else
   log "no migrated data detected at $GW_HOME/wb.db — nothing to move back"
   log "note: the root-owned runtime copy /opt/piforge is only used by the piforge-gw/piforge-oc"
   log "      units; remove it manually (sudo rm -rf /opt/piforge) once those units are gone"
+  log "note: the restored units run as antifield, so the gateway sudo rule is now unused:"
+  log "      sudo rm -f /etc/sudoers.d/piforge-gw"
 fi

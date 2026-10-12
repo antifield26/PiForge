@@ -25,6 +25,41 @@ function Step($name, [scriptblock]$body) {
   }
 }
 
+# Run one command on the Pi and hand back its own exit code plus its output. Every red-line
+# check below decides pass/fail from that exit code, never from a shell `&&`/`||` chain:
+# `ss ... && systemctl ... || echo 0` always exits 0 (the trailing `|| echo 0` succeeds even
+# when both checks fail), which is exactly how a new inbound listener or a secret in
+# `systemctl show -p Environment` used to be reported as OK.
+function Invoke-Pi([string]$Command) {
+  $output = ssh -o BatchMode=yes -o ConnectTimeout=10 $PiHost $Command 2>&1
+  # Capture immediately: any later native command would overwrite $LASTEXITCODE.
+  return @{ Code = $LASTEXITCODE; Output = @($output) }
+}
+
+function Test-RedLineCheck([scriptblock]$Remote) {
+  foreach ($port in 4096, 8787) {
+    $result = & $Remote "ss -lnt | grep -qE '127\.0\.0\.1:${port}\b'"
+    if ($result.Code -ne 0) {
+      throw "127.0.0.1:$port is not listening (red line 1: no inbound port; the services must stay on loopback)"
+    }
+  }
+  # grep -ciE prints a count, so a match is data and not a failure exit code (`|| true` keeps
+  # the remote exit 0; the count itself is the verdict).
+  $result = & $Remote "systemctl show -p Environment wb-gateway opencode-serve | grep -ciE 'PASSWORD|SECRET|sk-' || true"
+  if ($result.Code -ne 0) {
+    throw "probe failed: systemctl/ssh exited $($result.Code) ($($result.Output -join ' '))"
+  }
+  $count = (@($result.Output) -join "").Trim()
+  if ($count -notmatch '^\d+$') { throw "unexpected Environment probe output: '$count'" }
+  if ([int]$count -gt 0) {
+    throw "wb-gateway/opencode-serve Environment exposes $count secret-looking value(s) (red line 3: secrets only in /etc/piforge/*.env)"
+  }
+}
+
+# scripts/tests/release-check-redlines.ps1 dot-sources this file (InvocationName '.') to drive
+# Test-RedLineCheck against a fake Pi; stop here instead of running the real gate.
+if ($MyInvocation.InvocationName -eq '.') { return }
+
 Step "npm run verify (typecheck + tests)" { npm run verify }
 Step "npm run build" { npm run build }
 
@@ -48,8 +83,11 @@ if (-not $SkipDeploy) {
   Step "verify-e2e.mjs" {
     ssh -o BatchMode=yes $PiHost "sudo node /opt/piforge/scripts/verify-e2e.mjs"
   }
+  Step "verify-fixes.mjs (FIX-3 invariants)" {
+    ssh -o BatchMode=yes $PiHost "sudo node /opt/piforge/scripts/verify-fixes.mjs"
+  }
   Step "red lines (ports / env)" {
-    ssh -o BatchMode=yes $PiHost "ss -lntp | grep -E '127.0.0.1:(4096|8787)' && systemctl show -p Environment wb-gateway opencode-serve | grep -ciE 'PASSWORD|SECRET|sk-' || echo 0"
+    Test-RedLineCheck { param($command) Invoke-Pi $command }
   }
 }
 

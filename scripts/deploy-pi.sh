@@ -14,6 +14,8 @@
 #
 # Environment:
 #   FORCE_ENV=1   rewrite /etc/piforge/gateway.env and opencode.env even if they exist
+#
+# Usage: bash scripts/deploy-pi.sh [--prune-legacy]
 set -euo pipefail
 
 PIFORGE=/home/antifield/piforge
@@ -45,6 +47,14 @@ die() {
   printf '[deploy] ERROR: %s\n' "$*" >&2
   exit 1
 }
+
+PRUNE_LEGACY=0
+for arg in "$@"; do
+  case "$arg" in
+    --prune-legacy) PRUNE_LEGACY=1 ;;
+    *) die "unknown argument: $arg (supported: --prune-legacy)" ;;
+  esac
+done
 
 TMP_FILES=()
 # Path of the file created by the last make_tmp call.
@@ -112,14 +122,28 @@ command -v rsync >/dev/null 2>&1 || die "rsync not found in PATH"
 # /home/antifield is 0700, so piforge-gw/piforge-oc cannot read the checkout there. The units
 # start from /opt/piforge, which is root-owned and read-only for the service users.
 as_root install -d -m 0755 -o root -g root "$RUNTIME"
+# No *.env may reach the runtime tree: /home/antifield is 0700 but /opt/piforge is a+rX and
+# the legacy checkout file holds ADMIN_PASSWORD/SESSION_SECRET/OPENCODE_PASSWORD in
+# plaintext (deploy itself reads $PIFORGE/gateway.env for the migration).
 as_root rsync -a --delete \
   --exclude '.git/' \
   --exclude 'opencode/' \
   --exclude 'data/' \
   --exclude '*.log' \
   --exclude 'scripts/legacy/' \
+  --exclude '*.env' \
+  --exclude 'gateway.env' \
+  --exclude 'opencode.env' \
+  --exclude 'backup.env' \
   "$PIFORGE/" "$RUNTIME/"
 as_root chown -R root:root "$RUNTIME"
+# Defense in depth before the chmod: `--delete` does not remove excluded files, so a copy left
+# by an older deploy would silently become world-readable below. Fail, never chmod a key store.
+RUNTIME_SECRETS=$(as_root find "$RUNTIME" -type f \( -name '*.env' -o -name '*.env.bak-*' \) 2>/dev/null || true)
+if [[ -n "$RUNTIME_SECRETS" ]]; then
+  printf '%s\n' "$RUNTIME_SECRETS" | sed 's/^/[deploy]   /' >&2
+  die "secret file(s) found under $RUNTIME — refusing to chmod -R; remove them (sudo rm -f <paths above>) and re-run"
+fi
 # a+rX: readable/enterable for the service users; go-w keeps every service user out of the code.
 as_root chmod -R a+rX,go-w "$RUNTIME"
 as_root find "$RUNTIME/scripts" -name '*.sh' -exec chmod 0755 {} + 2>/dev/null || true
@@ -464,6 +488,33 @@ log "installed $SUDOERS (0440 root:root, visudo -f OK)"
 if ! as_root visudo -c >/dev/null 2>&1; then
   log "WARN: 'visudo -c' reports problems outside this deploy (usually a non-0440 mode in /etc/sudoers.d):"
   as_root visudo -c 2>&1 | grep -v '解析正确\|parsed OK' | sed 's/^/[deploy]   /' || true
+fi
+
+# ---------------------------------------------------------------------------
+# 7.5 Legacy bypass left over from the pre-migration layout
+# ---------------------------------------------------------------------------
+# The old layout granted the "workbench" user systemctl over the same units. After the
+# migration that file is an unused privilege grant, but it is NOT deleted automatically: the
+# grantee may not be ours any more, and silently removing someone else's sudoers entry is
+# worse than leaving a stale one. `--prune-legacy` is the explicit opt-in.
+LEGACY_SUDOERS=/etc/sudoers.d/workbench-systemctl
+if [[ -f "$LEGACY_SUDOERS" ]]; then
+  LEGACY_GRANTEE=$(as_root awk '!/^[[:space:]]*#/ && NF { print $1; exit }' "$LEGACY_SUDOERS" 2>/dev/null || true)
+  if [[ "$LEGACY_GRANTEE" != "workbench" ]]; then
+    log "WARN: $LEGACY_SUDOERS exists but grants '${LEGACY_GRANTEE:-unknown}', which is not this project's legacy user"
+    log "WARN: leaving it untouched — it may belong to another owner. Review and remove it by hand:"
+    log "WARN:   sudo visudo -c -f $LEGACY_SUDOERS && sudo cat $LEGACY_SUDOERS"
+  elif ((PRUNE_LEGACY)); then
+    as_root cp -a "$LEGACY_SUDOERS" "$LEGACY_SUDOERS.bak-$STAMP"
+    as_root rm -f "$LEGACY_SUDOERS"
+    log "--prune-legacy: removed $LEGACY_SUDOERS (backup at $LEGACY_SUDOERS.bak-$STAMP)"
+  elif id -u workbench >/dev/null 2>&1; then
+    log "WARN: legacy user 'workbench' still exists and $LEGACY_SUDOERS still grants it systemctl"
+    log "WARN: review it by hand, then remove it with: bash $0 --prune-legacy"
+  else
+    log "WARN: user 'workbench' is gone but $LEGACY_SUDOERS still grants it systemctl — leftover bypass"
+    log "WARN: remove it with: bash $0 --prune-legacy"
+  fi
 fi
 
 # ---------------------------------------------------------------------------

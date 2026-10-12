@@ -41,6 +41,9 @@ if [[ -f "$OC_HOME/.config/opencode/service.json" ]]; then
     "$OC_HOME/.config/opencode/service.json" "$OUT/config/service-json-summary.json" || true
 fi
 
-find "$OUT" -type f -print0 | xargs -0 sha256sum >"$OUT/SHA256SUMS"
+# Exclude the manifest from itself: the redirect creates an empty SHA256SUMS before find runs,
+# so checksumming it recorded a hash of nothing and `sha256sum -c` could never pass (same
+# `! -name SHA256SUMS` discipline as backup.sh).
+find "$OUT" -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 -r sha256sum >"$OUT/SHA256SUMS"
 chmod 0600 "$OUT/SHA256SUMS"
 log "snapshot at $OUT"

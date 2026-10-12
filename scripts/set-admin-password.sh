@@ -86,21 +86,34 @@ else
   GROUP=antifield
   MODE=0600
 fi
+
+STAMP=$(date +%Y%m%d-%H%M%S)
+ENV_BAK="$ENV_FILE.bak-$STAMP"
+if as_root test -f "$ENV_FILE"; then
+  # install -m 0600, not cp -a: this copy holds the *old* ADMIN_PASSWORD in plaintext, so it
+  # must never be group-readable (the live file is 0640 for the service group).
+  as_root install -m 0600 -o root -g root "$ENV_FILE" "$ENV_BAK"
+  log "kept the previous secret file as $(basename "$ENV_BAK") (0600 root:root)"
+fi
+
 as_root install -m "$MODE" -o "$OWNER" -g "$GROUP" "$NEXT" "$ENV_FILE"
 log "updated ADMIN_PASSWORD in $ENV_FILE ($MODE $OWNER:$GROUP)"
 
-# Immediate DB sync. The gateway's ensureAdminUser() also rotates the hash on start, so a
-# failure here is not fatal — say so instead of pretending it worked.
-NODE=$(command -v node)
-if [[ -n "$NODE" ]]; then
-  if id -u piforge-gw >/dev/null 2>&1 && [[ "$ENV_FILE" == "$NEW_ENV" ]]; then
-    as_root -u piforge-gw "$NODE" "$SCRIPT_DIR/reset-admin-pw.mjs" ||
-      log "WARN: could not sync the DB hash as piforge-gw; the gateway will rotate it on start"
-  else
-    as_root "$NODE" "$SCRIPT_DIR/reset-admin-pw.mjs" ||
-      log "WARN: could not sync the DB hash; the gateway will rotate it on start"
-  fi
+# Only the newest two copies of a plaintext secret are kept; the previous file was copied with
+# the live 0640, which would leave the old ADMIN_PASSWORD readable by the service group (and in
+# every nightly backup) for as long as the copy existed.
+mapfile -t OLD_BAKS < <(as_root sh -c "ls -1d '$ENV_FILE'.bak-* 2>/dev/null | sort -r" || true)
+if ((${#OLD_BAKS[@]} > 2)); then
+  for old in "${OLD_BAKS[@]:2}"; do
+    as_root rm -f -- "$old"
+    log "pruned old secret copy $(basename "$old")"
+  done
 fi
+
+# No immediate DB write: ADMIN_PASSWORD is read from gateway.env by the gateway's
+# ensureAdminUser() on start, which rotates the stored hash when the configured value changed.
+# (The former scripts/reset-admin-pw.mjs no longer exists.)
+NODE=$(command -v node)
 
 as_root systemctl restart wb-gateway
 sleep 2

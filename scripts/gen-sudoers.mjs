@@ -3,6 +3,7 @@
 // unit/action pairs listed in config/services.allowlist.json.
 //
 //   node scripts/gen-sudoers.mjs [path/to/services.allowlist.json] > /etc/sudoers.d/piforge-gw
+//   node scripts/gen-sudoers.mjs --out /tmp/piforge-gw.sudoers [path/to/services.allowlist.json]
 //
 // scripts/deploy-pi.sh runs this, validates the output with `visudo -c` and only then
 // installs it as /etc/sudoers.d/piforge-gw (mode 0440, root:root).
@@ -30,14 +31,33 @@ function fail(message) {
 }
 
 const here = dirname(fileURLToPath(import.meta.url))
+// Strip `--out <path>` first and treat everything left as a positional argument. The previous
+// index-filter version dropped argv[0] whenever --out was absent (index !== -1 && index !== 0
+// with outIndex === -1), so an allowlist path was silently ignored and the repository default
+// was used instead — a "consistent with the Pi" check could then pass against the wrong file.
 const args = process.argv.slice(2)
-const outIndex = args.indexOf("--out")
-const outPath = outIndex === -1 ? null : args[outIndex + 1]
-if (outIndex !== -1 && !outPath) fail("--out needs a path")
-const positional = args.filter((value, index) => index !== outIndex && index !== outIndex + 1)
-const allowlistPath = positional[0]
-  ? resolve(positional[0])
-  : resolve(here, "..", "config", "services.allowlist.json")
+let outPath = null
+const positional = []
+for (let index = 0; index < args.length; index++) {
+  const arg = args[index]
+  if (arg === "--out") {
+    const value = args[++index]
+    if (!value) fail("--out needs a path")
+    if (outPath !== null) fail("--out given twice")
+    outPath = value
+    continue
+  }
+  if (arg.startsWith("--")) fail(`unknown option ${JSON.stringify(arg)} (supported: --out <path>)`)
+  positional.push(arg)
+}
+if (positional.length > 1) fail(`expected at most one allowlist path, got ${positional.length}: ${positional.join(", ")}`)
+const DEFAULT_ALLOWLIST = resolve(here, "..", "config", "services.allowlist.json")
+const allowlistPath = positional[0] ? resolve(positional[0]) : DEFAULT_ALLOWLIST
+if (positional.length === 0) {
+  // Loud on stderr (stdout may be redirected into a sudoers file) so a caller that meant to
+  // pass the Pi's /etc/piforge/services.allowlist.json notices it is reading the repo copy.
+  process.stderr.write(`gen-sudoers: using default allowlist: ${allowlistPath}\n`)
+}
 
 let parsed
 try {

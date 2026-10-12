@@ -19,7 +19,7 @@
 #   DB_PATH, CONFIG_DIR, OPENCODE_DIR   override the source paths
 #   BACKUP_TARGET                       override the target root
 #   KEEP                                how many backup-* dirs to keep (default 14)
-#   ALLOW_MISSING_DB=1                  continue when wb.db is absent (restore testing)
+#   ALLOW_MISSING_DB=1                  continue when wb.db is absent (archive is PARTIAL, restore testing)
 #   PIFORGE_SKIP_RECORD=1               do not write a backup_runs row
 #
 # Exit codes: 0 ok / 2 database missing / 1 anything else.
@@ -105,7 +105,9 @@ DEST="$TARGET/backup-$STAMP"
 if [[ ! -f "$SRC_DB" ]]; then
   printf '[backup] ERROR: database not found (%s or %s)\n' "${DB_PATH:-$NEW_STATE/wb.db}" "$LEGACY_STATE/wb.db" >&2
   if [[ "$ALLOW_MISSING_DB" == "1" ]]; then
-    warn "ALLOW_MISSING_DB=1: continuing without a database (restore testing only)"
+    # Still an incomplete archive: nothing may report this run as ok (exit code 0 + "[backup] OK"
+    # is the gateway's success signal), it is only tolerated for restore testing.
+    incomplete "ALLOW_MISSING_DB=1: continuing without a database — no wb.db in this archive (restore testing only)"
   else
     printf '[backup] refusing to write an empty backup; set ALLOW_MISSING_DB=1 only for restore testing\n' >&2
     exit 2
@@ -246,6 +248,19 @@ fi
 # ---------------------------------------------------------------------------
 # 4. Checksums
 # ---------------------------------------------------------------------------
+# Per-archive status, written before the manifest so SHA256SUMS covers it. The retention pass
+# and restore-drill.sh must be able to tell a complete archive from a PARTIAL one on their own:
+# the console path records only the backup root in backup_runs, not this directory.
+write_status() {
+  if ((INCOMPLETE)); then
+    printf 'partial\n' >"$DEST/STATUS"
+  else
+    printf 'ok\n' >"$DEST/STATUS"
+  fi
+  chmod 0600 "$DEST/STATUS"
+}
+write_status
+
 BYTES=0
 CHECKSUM=""
 if command -v sha256sum >/dev/null 2>&1; then
@@ -258,6 +273,9 @@ if command -v sha256sum >/dev/null 2>&1; then
   note "checksums written ($(wc -l <"$DEST/SHA256SUMS" | tr -d ' ') files)"
 else
   incomplete "sha256sum not available: no SHA256SUMS written"
+  # The only way INCOMPLETE can still change after the marker: no manifest exists here, so
+  # re-stamping it cannot break the (absent) checksums.
+  write_status
 fi
 BYTES=$(du -sb "$DEST" | awk '{print $1}')
 note "bytes=$BYTES sha256=${CHECKSUM:-n/a}"
@@ -284,6 +302,30 @@ keep_count=$KEEP
 if ((keep_count < 1)); then
   keep_count=1
 fi
+
+# Delete only a verified, complete archive. A directory that fails `sha256sum -c`, has no
+# manifest or is not marked "ok" may be the only copy of something recoverable, so it is kept
+# and reported instead. The newest archive is never deleted: it is the baseline to fall back to
+# when the older ones turn out to be unreadable.
+prunable() { # dir
+  local dir="$1" status
+  if [[ ! -f "$dir/SHA256SUMS" ]]; then
+    warn "keeping $(basename "$dir"): no SHA256SUMS, cannot verify it before deleting"
+    return 1
+  fi
+  if ! (cd "$dir" && sha256sum -c --quiet SHA256SUMS >/dev/null 2>&1); then
+    warn "keeping $(basename "$dir"): SHA256SUMS verification failed (check by hand: cd $dir && sha256sum -c SHA256SUMS)"
+    return 1
+  fi
+  status=$(head -n1 "$dir/STATUS" 2>/dev/null || true)
+  if [[ "$status" != "ok" ]]; then
+    warn "keeping $(basename "$dir"): archive status is '${status:-unknown}', only verified ok archives are pruned"
+    return 1
+  fi
+  return 0
+}
+
+NEWEST=$(find "$TARGET" -maxdepth 1 -mindepth 1 -type d -name 'backup-*' 2>/dev/null | sort -r | head -n1 || true)
 index=0
 while IFS= read -r old; do
   [[ -n "$old" ]] || continue
@@ -292,9 +334,17 @@ while IFS= read -r old; do
     continue
   fi
   case "$old" in
-    "$TARGET"/backup-*) rm -rf -- "$old" && note "pruned $(basename "$old")" ;;
-    *) warn "refusing to prune unexpected path $old" ;;
+    "$TARGET"/backup-*) ;;
+    *) warn "refusing to prune unexpected path $old"; continue ;;
   esac
+  if [[ -n "$NEWEST" && "$old" == "$NEWEST" ]]; then
+    warn "refusing to prune the newest archive $old"
+    continue
+  fi
+  if ! prunable "$old"; then
+    continue
+  fi
+  rm -rf -- "$old" && note "pruned $(basename "$old")"
 done < <(find "$TARGET" -maxdepth 1 -mindepth 1 -type d -name 'backup-*' 2>/dev/null | sort -r)
 
 if ((INCOMPLETE)); then
