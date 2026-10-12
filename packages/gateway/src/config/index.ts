@@ -13,6 +13,7 @@ export interface GatewayConfig {
   jsonBodyLimitBytes: number
   uploadBodyLimitBytes: number
   metricsRetentionDays: number
+  auditRetentionDays: number
   sessionPurgeIntervalMs: number
   webDist: string
 }
@@ -46,6 +47,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     jsonBodyLimitBytes: Number(env.JSON_BODY_LIMIT ?? 1024 * 1024),
     uploadBodyLimitBytes: Number(env.UPLOAD_BODY_LIMIT ?? UPLOAD_LIMIT_BYTES),
     metricsRetentionDays: Number(env.METRICS_RETENTION_DAYS ?? 30),
+    auditRetentionDays: Number(env.AUDIT_RETENTION_DAYS ?? 180),
     sessionPurgeIntervalMs: 60 * 60 * 1000,
     webDist: env.WEB_DIST ?? "apps/web/dist",
   }

@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from "fastify"
 import { requireAuth } from "../auth/routes.js"
-import { queryMetrics } from "./metrics.js"
+import { countMetrics, queryMetrics } from "./metrics.js"
 import type { MetricKind, MetricsSummary } from "@piforge/shared"
 import { clampInt, sendError } from "../../util/validate.js"
 
@@ -20,14 +20,22 @@ export const historyRoutes: FastifyPluginAsync = async (app) => {
       const from = clampInt(req.query.from, to - 7 * 86400_000, 0, Number.MAX_SAFE_INTEGER)
       const limit = clampInt(req.query.limit, 50_000, 1, 100_000)
       const items = queryMetrics(app.db, kind, from, to, limit)
+      // A 7-day window at 5s sampling is ~121k points, well past the export cap. Returning the
+      // true count lets the UI say so instead of silently presenting a truncated series as the
+      // whole range.
+      const total = countMetrics(app.db, kind, from, to)
 
       if (req.query.format === "csv") {
-        const lines = ["ts,kind,value,iso", ...items.map((i) => `${i.ts},${i.kind},${i.value},${new Date(i.ts).toISOString()}`)]
+        const lines = [
+          "ts,kind,value,iso",
+          ...items.map((i) => `${i.ts},${i.kind},${i.value},${new Date(i.ts).toISOString()}`),
+        ]
         reply.header("content-type", "text/csv; charset=utf-8")
         reply.header("content-disposition", `attachment; filename="metrics-${kind}-${from}-${to}.csv"`)
+        if (total > items.length) reply.header("x-piforge-truncated", `${total - items.length}`)
         return reply.send(lines.join("\n"))
       }
-      return { kind, from, to, count: items.length, items }
+      return { kind, from, to, count: items.length, total, truncated: total > items.length, items }
     },
   )
 

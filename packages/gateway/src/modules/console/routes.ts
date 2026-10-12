@@ -1,6 +1,14 @@
 import type { FastifyPluginAsync } from "fastify"
 import { requireAuth } from "../auth/routes.js"
-import { queryMetrics, readSdHealth, readSnapshot, recordMetrics, recordSdHealth } from "./metrics.js"
+import {
+  countMetrics,
+  persistWriteCounters,
+  queryMetrics,
+  readSdHealth,
+  readSnapshot,
+  recordMetrics,
+  recordSdHealth,
+} from "./metrics.js"
 import type { MetricKind } from "@piforge/shared"
 import { controlService, listAudit, listAuditUnits, listLoginAudit, listServiceStatus } from "./service-control.js"
 import {
@@ -16,7 +24,7 @@ import {
 import { clientIp } from "../../util/net.js"
 import { checkHeavy, createHeavyLimiter } from "../../auth/ratelimit.js"
 import { clampInt, sendError } from "../../util/validate.js"
-import { pruneMetrics, pruneSdHealth } from "../../db/index.js"
+import { pruneAuditTables, pruneMetrics, pruneSdHealth } from "../../db/index.js"
 import { runBackup } from "./backup.js"
 
 const FLUSH_MS = 5 * 60 * 1000
@@ -68,16 +76,20 @@ export const consoleRoutes: FastifyPluginAsync = async (app) => {
 
     flushTimer = setInterval(() => {
       if (pending.length === 0) return
-      const batch = pending.splice(0, pending.length)
+      // Only dequeue once the write succeeded: a throw used to drop every sample collected in
+      // the last 5 minutes because the batch had already been spliced out of `pending`.
+      const batch = pending.slice(0, pending.length)
       try {
         for (const snap of batch) recordMetrics(app.db, snap)
-        void readSdHealth(app.db)
+        pending.splice(0, batch.length)
+        void persistWriteCounters(app.db)
           .then((sd) => recordSdHealth(app.db, sd))
-          .catch(() => undefined)
+          .catch((err) => app.log.warn({ err }, "sd health flush failed"))
         pruneMetrics(app.db, app.config.metricsRetentionDays)
         pruneSdHealth(app.db)
+        pruneAuditTables(app.db, app.config.auditRetentionDays)
       } catch (err) {
-        app.log.warn({ err }, "metrics flush failed")
+        app.log.warn({ err, dropped: batch.length }, "metrics flush failed; samples retained for retry")
       }
     }, FLUSH_MS)
     flushTimer.unref()
@@ -98,7 +110,7 @@ export const consoleRoutes: FastifyPluginAsync = async (app) => {
     return readSnapshot(app.db)
   })
 
-  app.get<{ Querystring: { kind?: string; from?: string; to?: string } }>("/metrics", async (req, reply) => {
+  app.get<{ Querystring: { kind?: string; from?: string; to?: string; limit?: string } }>("/metrics", async (req, reply) => {
     if (!requireAuth(req)) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
     const kind = (req.query.kind ?? "cpu") as MetricKind
     if (!METRIC_KINDS.includes(kind)) {
@@ -106,7 +118,11 @@ export const consoleRoutes: FastifyPluginAsync = async (app) => {
     }
     const to = clampInt(req.query.to, Date.now(), 0, Number.MAX_SAFE_INTEGER)
     const from = clampInt(req.query.from, to - 3600_000, 0, Number.MAX_SAFE_INTEGER)
-    return { kind, from, to, items: queryMetrics(app.db, kind, from, to) }
+    const limit = clampInt(req.query.limit, 20_000, 1, 100_000)
+    const items = queryMetrics(app.db, kind, from, to, limit)
+    // Report the true total so a client can tell a complete window from a clamped one.
+    const total = countMetrics(app.db, kind, from, to)
+    return { kind, from, to, total, truncated: total > items.length, items }
   })
 
   app.get("/sd", async (req, reply) => {
@@ -301,12 +317,16 @@ export const consoleRoutes: FastifyPluginAsync = async (app) => {
   app.get<{ Querystring: { limit?: string; unread?: string } }>("/alerts", async (req, reply) => {
     const auth = requireAuth(req)
     if (!auth) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
+    const items = listAlerts(app.db, {
+      limit: clampInt(req.query.limit, 50, 1, 200),
+      unreadOnly: req.query.unread === "1" || req.query.unread === "true",
+    })
+    // `unread` counts the whole table while `items` is a window, so a client that badges the
+    // window would show a number it cannot explain. Report both.
     return {
-      items: listAlerts(app.db, {
-        limit: clampInt(req.query.limit, 50, 1, 200),
-        unreadOnly: req.query.unread === "1" || req.query.unread === "true",
-      }),
+      items,
       unread: countUnreadAlerts(app.db),
+      unreadInWindow: items.filter((a) => a.readAt == null).length,
     }
   })
 
@@ -345,7 +365,16 @@ export const consoleRoutes: FastifyPluginAsync = async (app) => {
   })
 }
 
+/**
+ * CSV cell escaping.
+ *
+ * A leading `=`, `+`, `-`, `@`, tab or CR makes Excel/Sheets treat the cell as a formula, and
+ * `username` / `user_agent` on the login audit are attacker-controlled without a session, so the
+ * export would otherwise be a spreadsheet-injection delivery vector. Prefix with an apostrophe,
+ * which spreadsheets render as literal text.
+ */
 function csvCell(value: string | number | null): string {
   const s = value == null ? "" : String(value)
-  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+  const inert = /^[=+\-@\t\r]/.test(s) ? `'${s}` : s
+  return /[",\n\r]/.test(inert) ? `"${inert.replace(/"/g, '""')}"` : inert
 }

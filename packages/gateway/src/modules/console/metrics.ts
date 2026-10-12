@@ -12,11 +12,26 @@ const RATED_TBW_BYTES = Number(process.env.SD_RATED_TBW_BYTES ?? 100 * 1024 ** 4
 const WRITE_SETTING_PERSIST_MS = 5 * 60 * 1000
 /** Persist early when a lot has been written, so a reboot cannot lose much. */
 const WRITE_SETTING_PERSIST_DELTA = 64 * 1024 * 1024
+const MIN_RATE_WINDOW_MS = 10 * 60 * 1000
+const ROTATE_WINDOW_MS = 24 * 3600 * 1000
 
-let lastDisk: { sectors: number; at: number } | null = null
 let lastPersistAt = 0
+/**
+ * Day-write rate, kept in memory. The HTTP read paths (`/console/sd`, `/console/perf`) and the
+ * 60s alert detector must not write to the SD card just to display a number, so only the 5-minute
+ * flush recomputes and persists it. Until the first flush this is 0 rather than a DB read.
+ */
+let dayWriteCache = 0
 
-export async function readSnapshot(db: Db): Promise<SystemSnapshot> {
+export interface LifecycleInput {
+  /** Bytes written since boot, straight from /proc/diskstats. */
+  bootBytes: number
+  /** Bytes/second right now; needs a previous sample, so it is 0 until the second read. */
+  bps: number
+}
+
+/** Read-only view of the machine. Never writes to the database. */
+export async function readSnapshot(_db: Db): Promise<SystemSnapshot> {
   const [tempC, load1, mem, disk, throttled, uptimeSec] = await Promise.all([
     readTemp(),
     readLoad(),
@@ -25,56 +40,64 @@ export async function readSnapshot(db: Db): Promise<SystemSnapshot> {
     readThrottled(),
     readUptime(),
   ])
-  const writes = accountWrites(db, disk.bootBytes)
+  const { lifetime, boot } = accountWritesView(disk.bootBytes)
   return {
     tempC,
     load1,
     memTotalKb: mem.totalKb,
     memAvailableKb: mem.availableKb,
     diskWriteBps: disk.bps,
-    sdTotalWriteBytes: writes.lifetime,
-    sdBootWriteBytes: writes.boot,
+    sdTotalWriteBytes: lifetime,
+    sdBootWriteBytes: boot,
     throttled,
     uptimeSec,
     capturedAt: Date.now(),
   }
 }
 
-export async function readSdHealth(db: Db): Promise<SdHealth> {
-  let model = "unknown"
-  try {
-    model = readFileSync(`/sys/block/${SD_DEVICE}/device/name`, "utf8").trim()
-  } catch {
-    /* non-linux or missing */
-  }
+/** Read-only SD view for the console; `dayWriteBytes` comes from the last flush. */
+export async function readSdHealth(_db: Db): Promise<SdHealth> {
   const disk = await readDiskWrite()
-  const writes = accountWrites(db, disk.bootBytes)
-  const dayWriteBytes = estimateDayWrite(db, writes.lifetime)
-  const remaining = RATED_TBW_BYTES - writes.lifetime
+  const { lifetime, boot } = accountWritesView(disk.bootBytes)
+  const remaining = RATED_TBW_BYTES - lifetime
   return {
-    model,
-    totalWriteBytes: writes.lifetime,
-    bootWriteBytes: writes.boot,
-    dayWriteBytes,
-    estimateDaysLeft: dayWriteBytes > 0 && remaining > 0 ? Math.round(remaining / dayWriteBytes) : null,
+    model: sdModel(),
+    totalWriteBytes: lifetime,
+    bootWriteBytes: boot,
+    dayWriteBytes: dayWriteCache,
+    estimateDaysLeft: dayWriteCache > 0 && remaining > 0 ? Math.round(remaining / dayWriteCache) : null,
     ratedTbwBytes: RATED_TBW_BYTES,
+  }
+}
+
+function sdModel(): string {
+  try {
+    return readFileSync(`/sys/block/${SD_DEVICE}/device/name`, "utf8").trim()
+  } catch {
+    return "unknown"
   }
 }
 
 /**
  * /proc/diskstats counters reset on every boot, so a raw read is NOT a lifetime figure.
  * We persist the boot counter and fold it into an accumulator when a reboot is detected.
+ *
+ * Split into a mutating persist step and a pure view: the sampler calls `accountWrites`
+ * (which may write), while HTTP read paths call the returned lifetime figure only.
  */
-/** Exported for tests: folds a boot-relative counter into a lifetime figure. */
 export function accountWrites(db: Db, bootBytes: number, now = Date.now()): { lifetime: number; boot: number } {
   const accum = getSettingNumber(db, "sd_write_accum") ?? 0
   const last = getSettingNumber(db, "sd_write_boot")
+  // Keep the read-path mirror in step with whatever this call decided, so a poll after a
+  // reboot fold reports the folded total instead of a stale pre-fold one.
+  persistedAccum = accum
 
   if (last === null || bootBytes < last) {
     const folded = last ?? 0
     const nextAccum = accum + folded
     setSetting(db, "sd_write_accum", String(nextAccum))
     setSetting(db, "sd_write_boot", String(bootBytes))
+    persistedAccum = nextAccum
     lastPersistAt = now
     return { lifetime: nextAccum + bootBytes, boot: bootBytes }
   }
@@ -86,12 +109,34 @@ export function accountWrites(db: Db, bootBytes: number, now = Date.now()): { li
   return { lifetime: accum + bootBytes, boot: bootBytes }
 }
 
+/** In-memory mirror of the fold, so a console poll does not have to touch the database. */
+function accountWritesView(bootBytes: number): { lifetime: number; boot: number } {
+  return { lifetime: persistedAccum + bootBytes, boot: bootBytes }
+}
+
+let persistedAccum = 0
+
+/** Once at startup: load the accumulator so views are correct before the first flush. */
+export function primeWriteAccumulator(db: Db): void {
+  persistedAccum = getSettingNumber(db, "sd_write_accum") ?? 0
+  dayWriteCache = getSettingNumber(db, "sd_rate_day") ?? 0
+}
+
+/**
+ * The 5-minute flush path: fold the boot counter, refresh the day-write estimate and persist.
+ * Returns the SD view so the caller can store an hourly history row without a second read.
+ */
+export async function persistWriteCounters(db: Db, now = Date.now()): Promise<SdHealth> {
+  const disk = await readDiskWrite()
+  const { lifetime } = accountWrites(db, disk.bootBytes, now)
+  dayWriteCache = estimateDayWrite(db, lifetime, now)
+  return readSdHealth(db)
+}
+
 /** Smoothed daily write rate from a persisted baseline (survives restarts). */
 function estimateDayWrite(db: Db, lifetimeBytes: number, now = Date.now()): number {
   const baseTs = getSettingNumber(db, "sd_rate_ts")
   const baseTotal = getSettingNumber(db, "sd_rate_total")
-  const MIN_WINDOW_MS = 10 * 60 * 1000
-  const ROTATE_WINDOW_MS = 24 * 3600 * 1000
 
   if (baseTs === null || baseTotal === null || lifetimeBytes < baseTotal) {
     setSetting(db, "sd_rate_ts", String(now))
@@ -100,9 +145,8 @@ function estimateDayWrite(db: Db, lifetimeBytes: number, now = Date.now()): numb
   }
 
   const elapsed = now - baseTs
-  if (elapsed < MIN_WINDOW_MS) {
-    const maybe = getSettingNumber(db, "sd_rate_day")
-    return maybe ?? 0
+  if (elapsed < MIN_RATE_WINDOW_MS) {
+    return getSettingNumber(db, "sd_rate_day") ?? 0
   }
 
   const perDay = ((lifetimeBytes - baseTotal) / elapsed) * 86_400_000
@@ -144,6 +188,14 @@ export function queryMetrics(db: Db, kind: MetricKind, from: number, to: number,
   return rows.map((r) => ({ ts: r.ts, kind: r.kind as MetricKind, value: r.value }))
 }
 
+/** Total rows in a window, ignoring the display limit, so callers can report truncation. */
+export function countMetrics(db: Db, kind: MetricKind, from: number, to: number): number {
+  const row = db
+    .prepare("SELECT COUNT(*) AS n FROM metrics_points WHERE kind = ? AND ts >= ? AND ts <= ?")
+    .get(kind, from, to) as { n: number }
+  return Number(row.n)
+}
+
 async function readTemp(): Promise<number> {
   try {
     const { stdout } = await execFileAsync("vcgencmd", ["measure_temp"], { timeout: 4000 })
@@ -178,6 +230,8 @@ async function readMem(): Promise<{ totalKb: number; availableKb: number }> {
     return { totalKb: 0, availableKb: 0 }
   }
 }
+
+let lastDisk: { sectors: number; at: number } | null = null
 
 export async function readDiskWrite(): Promise<{ bps: number; bootBytes: number }> {
   try {

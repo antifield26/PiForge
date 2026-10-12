@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from "fastify"
 import { randomUUID } from "node:crypto"
 import { requireAuth } from "../auth/routes.js"
-import { asFiniteNumber, asOptionalString, asStringArray, asTrimmedString, isTodoStatus, likeContains, sendError } from "../../util/validate.js"
+import { asFiniteNumber, asOptionalString, asStringArray, asTrimmedString, escapeLike, isTodoStatus, likeContains, sendError } from "../../util/validate.js"
 
 const MAX_TITLE = 300
 const MAX_NOTES = 20_000
@@ -159,6 +159,13 @@ export const workbenchRoutes: FastifyPluginAsync = async (app) => {
       sql += " AND (title LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\')"
       params.push(likeContains(q), likeContains(q))
     }
+    if (tag) {
+      // Filter in SQL: doing it after LIMIT 200 meant a tag used by an older note vanished as soon
+      // as the user had more than 200 notes. Tags are stored as a JSON array, so match the quoted
+      // element.
+      sql += " AND tags LIKE ? ESCAPE '\\'"
+      params.push(`%"${escapeLike(tag)}"%`)
+    }
     sql += " ORDER BY updated_at DESC LIMIT 200"
     const rows = app.db.prepare(sql).all(...params) as {
       id: string
@@ -168,7 +175,7 @@ export const workbenchRoutes: FastifyPluginAsync = async (app) => {
       created_at: number
       updated_at: number
     }[]
-    let items = rows.map((r) => ({
+    const items = rows.map((r) => ({
       id: r.id,
       title: r.title,
       body: r.body,
@@ -176,7 +183,6 @@ export const workbenchRoutes: FastifyPluginAsync = async (app) => {
       createdAt: r.created_at,
       updatedAt: r.updated_at,
     }))
-    if (tag) items = items.filter((n) => n.tags.includes(tag))
     return { items }
   })
 
