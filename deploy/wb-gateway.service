@@ -1,27 +1,65 @@
 [Unit]
 Description=PiForge workbench gateway
+Documentation=file:/opt/piforge/deploy/wb-gateway.service
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=antifield
-Group=antifield
-WorkingDirectory=/home/antifield/piforge
-ExecStart=/usr/local/bin/node /home/antifield/piforge/packages/gateway/dist/index.js
-Restart=on-failure
-RestartSec=5
+# Dedicated system user without sudo. Only the generated /etc/sudoers.d/piforge-gw rule
+# lets it restart allowlisted units.
+User=piforge-gw
+Group=piforge-gw
+# vcgencmd (temperature / throttling metrics) talks to /dev/vcio, which is group gpio.
+SupplementaryGroups=gpio
+
+# The runtime is installed to /opt by scripts/deploy-pi.sh: /home/antifield is 0700, so a
+# service user could not read the checkout there. Runtime state does not live in either place.
+WorkingDirectory=/opt/piforge
+ExecStart=/usr/local/bin/node /opt/piforge/packages/gateway/dist/index.js
+
+# Secrets (SESSION_SECRET, ADMIN_PASSWORD, OPENCODE_PASSWORD) come from this file
+# (0640 root:piforge-gw). Never use Environment= for them: `systemctl show -p Environment`
+# exposes the value to every local user.
+EnvironmentFile=/etc/piforge/gateway.env
+
+# systemd creates and owns this: /var/lib/piforge (wb.db, cloud/, backups/).
+# ConfigurationDirectory=piforge is deliberately NOT used: systemd recursively chowns an existing
+# ConfigurationDirectory to the unit's user, which would hand /etc/piforge (gateway.env,
+# opencode.env, the allowlist) to piforge-gw. scripts/deploy-pi.sh creates it root:root 0755.
+StateDirectory=piforge
+StateDirectoryMode=0750
+# wb.db holds notes/todos/password hashes: never let the default umask make it world-readable.
+UMask=0077
+
 Environment=NODE_ENV=production
 Environment=HOST=127.0.0.1
 Environment=PORT=8787
 Environment=OPENCODE_URL=http://127.0.0.1:4096
-Environment=DB_PATH=/home/antifield/piforge/data/wb.db
-Environment=SERVICES_ALLOWLIST=/home/antifield/piforge/config/services.allowlist.json
-# SESSION_SECRET must be provided via systemd drop-in or EnvironmentFile (not in git)
-EnvironmentFile=-/home/antifield/piforge/gateway.env
-# NoNewPrivileges cannot be set: gateway runs `sudo systemctl` for allowlisted units.
+Environment=DB_PATH=/var/lib/piforge/wb.db
+Environment=CLOUD_STORAGE_DIR=/var/lib/piforge/cloud
+Environment=SERVICES_ALLOWLIST=/etc/piforge/services.allowlist.json
+Environment=BACKUP_SCRIPT=/opt/piforge/scripts/backup.sh
+Environment=WEB_DIST=/opt/piforge/apps/web/dist
+
+Restart=on-failure
+RestartSec=5
+
+# Hardening.
+# NoNewPrivileges=true and RestrictSUIDSGID=true are deliberately NOT set here: the gateway
+# runs `sudo systemctl <action> <unit>` for allowlisted units and sudo is a setuid-root
+# binary, so either option would make that exec fail. Authorization is bounded by
+# /etc/sudoers.d/piforge-gw instead, which lists exactly the allowlisted unit/action pairs.
+# PrivateDevices is deliberately NOT set either: vcgencmd needs /dev/vcio.
 PrivateTmp=true
-SupplementaryGroups=gpio
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
 
 [Install]
 WantedBy=multi-user.target

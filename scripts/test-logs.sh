@@ -1,15 +1,43 @@
 #!/bin/bash
-set -e
-source /home/antifield/piforge/gateway.env
-curl -sS -c /tmp/c -X POST http://127.0.0.1:8787/api/v1/auth/login \
-  -H 'content-type: application/json' \
-  --data-raw "{\"username\":\"${ADMIN_USER}\",\"password\":\"${ADMIN_PASSWORD}\"}" > /dev/null
+# Console logs + apt endpoints smoke test (gateway on localhost).
+#
+# Credentials: read from gateway.env through lib/env.sh (never sourced), login body passed
+# as a 0600 --data @file, session cookie jar is a 0600 mktemp removed on exit. Nothing
+# secret reaches a command line or a predictable path under /tmp.
+set -euo pipefail
+
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=lib/env.sh
+source "$SCRIPT_DIR/lib/env.sh"
+
+BASE=${BASE:-http://127.0.0.1:8787}
+
+ENV_FILE=$(piforge_gateway_env) || {
+  echo "gateway.env not found (looked in /etc/piforge and /home/antifield/piforge)" >&2
+  exit 1
+}
+ADMIN_USER=$(piforge_env_get "$ENV_FILE" ADMIN_USER)
+ADMIN_USER=${ADMIN_USER:-admin}
+ADMIN_PASSWORD=$(piforge_env_get "$ENV_FILE" ADMIN_PASSWORD)
+if [[ -z "$ADMIN_PASSWORD" ]]; then
+  echo "ADMIN_PASSWORD is not set in $ENV_FILE" >&2
+  exit 1
+fi
+
+piforge_tmpfile
+JAR=$PIFORGE_TMPFILE
+piforge_tmpfile
+LOGIN_BODY=$PIFORGE_TMPFILE
+printf '%s' "$ADMIN_PASSWORD" | piforge_login_body "$ADMIN_USER" > "$LOGIN_BODY"
+
+curl -sS -c "$JAR" -X POST "$BASE/api/v1/auth/login" \
+  -H 'content-type: application/json' --data @"$LOGIN_BODY" > /dev/null
 
 echo "=== LOGS allow ==="
-curl -sS -b /tmp/c 'http://127.0.0.1:8787/api/v1/console/logs?unit=wb-gateway.service&lines=5'
+curl -sS -b "$JAR" "$BASE/api/v1/console/logs?unit=wb-gateway.service&lines=5"
 echo
 echo "=== LOGS deny ssh ==="
-curl -sS -b /tmp/c -w '\nHTTP %{http_code}\n' 'http://127.0.0.1:8787/api/v1/console/logs?unit=ssh.service&lines=5'
+curl -sS -b "$JAR" -w '\nHTTP %{http_code}\n' "$BASE/api/v1/console/logs?unit=ssh.service&lines=5"
 echo "=== APT ==="
-curl -sS -b /tmp/c 'http://127.0.0.1:8787/api/v1/console/apt-check' | head -c 600
+curl -sS -b "$JAR" "$BASE/api/v1/console/apt-check" | head -c 600
 echo

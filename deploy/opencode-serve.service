@@ -1,18 +1,38 @@
 [Unit]
 Description=OpenCode v2 server (localhost only)
+Documentation=file:/home/antifield/piforge/deploy/opencode-serve.service
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=antifield
-Group=antifield
-ExecStart=/home/antifield/.opencode/bin/opencode serve --hostname 127.0.0.1 --port 4096
+# Dedicated system user without sudo; the agent runtime is isolated from gateway state.
+User=piforge-oc
+Group=piforge-oc
+
+# Workspace isolation: the agent's project directory is this directory, not /.
+# HOME=/var/lib/piforge-oc comes from the passwd entry created by scripts/deploy-pi.sh,
+# so ~/.config/opencode, ~/.local/share/opencode and ~/.local/state/opencode resolve there.
+WorkingDirectory=/var/lib/piforge-oc/workspace
+ExecStart=/var/lib/piforge-oc/.opencode/bin/opencode serve --hostname 127.0.0.1 --port 4096
+
+# OPENCODE_PASSWORD comes from this file (0640 root:piforge-oc). Never use Environment=:
+# `systemctl show -p Environment` exposes the value to every local user.
+EnvironmentFile=/etc/piforge/opencode.env
+
 Restart=on-failure
 RestartSec=5
-# API keys live only in OpenCode local config (~/.config/opencode), never here.
+
 NoNewPrivileges=true
 PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/piforge-oc
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryMax=1500M
 
 [Install]
 WantedBy=multi-user.target

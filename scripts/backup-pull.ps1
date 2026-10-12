@@ -1,42 +1,178 @@
-# Pull PiForge backup from Pi into local D:\PiBackUp
-# Run on Windows (Task Scheduler nightly). Requires SSH to Pi (antifield).
+<#
+.SYNOPSIS
+  Pull the newest PiForge backup from the Pi into a local folder, verified end to end.
+
+.DESCRIPTION
+  Run on Windows (Task Scheduler, shortly after the Pi's piforge-backup.timer at 03:15).
+  The order of operations is deliberate:
+
+    1. trigger a fresh backup on the Pi (best effort, root via sudo);
+    2. verify SHA256SUMS **on the Pi side** with `sha256sum -c` — if that fails the
+       transfer is pointless, so the script stops;
+    3. tar the backup as root (nightly backups are root-only, 0750) and scp it over;
+    4. extract locally and re-verify every file with Get-FileHash;
+    5. prune local copies, keeping the newest -Keep directories.
+
+  Every ssh/scp exit code is checked. `$LASTEXITCODE` is captured immediately after each
+  native command and the command's own failure fails this script (the previous version
+  piped ssh into Write-Host, which discarded the status and reported success unconditionally).
+
+.PARAMETER RemotePath
+  Backup root on the Pi. Defaults to the post-migration path; pass
+  /home/antifield/backups/piforge for a pre-migration Pi.
+
+.PARAMETER Keep
+  How many local backup-* directories to keep. Default 14, matching KEEP=14 in
+  /etc/piforge/backup.env on the Pi. The newest directory is always kept.
+
+.PARAMETER SkipBackupRun
+  Do not trigger a new backup on the Pi; just pull the newest existing one.
+
+.EXAMPLE
+  pwsh -File scripts/backup-pull.ps1
+  pwsh -File scripts/backup-pull.ps1 -LocalTarget E:\PiBackUp -Keep 30
+#>
+[CmdletBinding()]
 param(
-  [string]$PiHost = "antifield@169.254.77.10",
-  [string]$RemotePath = "/home/antifield/backups/piforge",
-  [string]$LocalTarget = "D:\PiBackUp"
+  # Overridable: -PiHost antifield@other-host, or set PIFORGE_HOST in the environment
+  # (the bash scripts use ${PIFORGE_HOST:-169.254.77.10} for the same reason).
+  [string]$PiHost = $(if ($env:PIFORGE_HOST) { "antifield@$env:PIFORGE_HOST" } else { "antifield@169.254.77.10" }),
+  [string]$RemotePath = "/var/lib/piforge/backups/piforge",
+  [string]$LocalTarget = "D:\PiBackUp",
+  [int]$Keep = 14,
+  [switch]$SkipBackupRun
 )
 
 $ErrorActionPreference = "Stop"
+# Native stderr (ssh progress, tar warnings) must not become a terminating error; the exit
+# code decides. Available in PowerShell 7.3+; harmless to set when present.
+if (Test-Path Variable:PSNativeCommandUseErrorActionPreference) {
+  $PSNativeCommandUseErrorActionPreference = $false
+}
+
+$sshOptions = @("-o", "BatchMode=yes", "-o", "ConnectTimeout=15")
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $dest = Join-Path $LocalTarget "backup-$stamp"
-New-Item -ItemType Directory -Force -Path $dest | Out-Null
+# Stage the tarball in /tmp: it must be reachable by the unprivileged SSH user, while the backup
+# root itself is 0750 piforge-gw and cannot be traversed by antifield. /tmp is also never matched
+# by the backup-* retention glob or the restore drill.
+$remoteArchive = "/tmp/.piforge-pull-$stamp.tgz"
+$localArchive = Join-Path ([System.IO.Path]::GetTempPath()) "piforge-pull-$stamp.tgz"
 
-Write-Host "[pull] ${PiHost}:${RemotePath} -> $dest"
+function Write-Step([string]$Message) { Write-Host "[pull] $Message" }
 
-# Trigger a fresh backup on the Pi first (best-effort)
-ssh $PiHost "export DB_PATH=/home/antifield/piforge/data/wb.db CONFIG_DIR=/home/antifield/piforge/config OPENCODE_DIR=/home/antifield/.opencode; bash /home/antifield/piforge/scripts/backup.sh /home/antifield/backups/piforge" 2>&1 | Write-Host
+# Run a command over ssh, surface its output, and return its exit code.
+function Invoke-Pi {
+  param(
+    [Parameter(Mandatory)][string]$Command,
+    [switch]$AllowFailure
+  )
+  $output = ssh @sshOptions $PiHost $Command 2>&1
+  $code = $LASTEXITCODE
+  if ($output) { $output | ForEach-Object { Write-Host "       $_" } }
+  if ($code -ne 0 -and -not $AllowFailure) {
+    throw "ssh command failed with exit code ${code}: $Command"
+  }
+  return $code
+}
 
-# Copy the newest backup directory
-ssh $PiHost "ls -1dt $RemotePath/backup-* 2>/dev/null | head -1" | ForEach-Object {
-  $latest = $_.Trim()
-  if ($latest) {
-    scp -r "${PiHost}:$latest/." $dest
-    Write-Host "[pull] copied $latest"
+function Remove-RemoteArchive {
+  Invoke-Pi -Command "sudo rm -f '$remoteArchive'" -AllowFailure | Out-Null
+}
+
+if ($Keep -lt 1) { throw "-Keep must be at least 1 (the newest backup is always kept)" }
+if (-not (Test-Path $LocalTarget)) {
+  New-Item -ItemType Directory -Force -Path $LocalTarget | Out-Null
+}
+
+# ---------------------------------------------------------------------------
+# 1. Fresh backup on the Pi (best effort: a failure still leaves older backups)
+# ---------------------------------------------------------------------------
+if (-not $SkipBackupRun) {
+  Write-Step "running the backup on the Pi (sudo $RemotePath)"
+  $code = Invoke-Pi -Command "sudo /opt/piforge/scripts/backup.sh" -AllowFailure
+  if ($code -ne 0) {
+    Write-Warning "[pull] the backup run on the Pi exited $code; continuing with the newest existing backup"
   }
 }
 
-# Verify checksum file exists
-$sums = Join-Path $dest "SHA256SUMS"
-if (Test-Path $sums) {
-  Write-Host "[pull] SHA256SUMS present"
-} else {
-  Write-Warning "[pull] SHA256SUMS missing"
+# ---------------------------------------------------------------------------
+# 2. Newest backup + Pi-side checksum verification
+# ---------------------------------------------------------------------------
+Write-Step "locating the newest backup under $RemotePath"
+$latest = (ssh @sshOptions $PiHost "sudo find $RemotePath -maxdepth 1 -mindepth 1 -type d -name 'backup-*' | sort -r | head -n1" 2>&1)
+$code = $LASTEXITCODE
+if ($code -ne 0) { throw "could not list backups on the Pi (exit ${code})" }
+$latest = ($latest | Select-Object -First 1 | Out-String).Trim()
+if (-not $latest) { throw "no backup-* directory under $RemotePath on the Pi" }
+Write-Step "newest backup: $latest"
+
+Write-Step "verifying SHA256SUMS on the Pi (sha256sum -c)"
+$null = Invoke-Pi -Command "sudo sh -c 'cd $latest && sha256sum -c --quiet SHA256SUMS'"
+Write-Step "Pi-side checksums OK"
+
+# ---------------------------------------------------------------------------
+# 3. Transfer
+# ---------------------------------------------------------------------------
+Write-Step "packing on the Pi (root reads the root-only backup tree)"
+$null = Invoke-Pi -Command "sudo tar -C '$latest' -czf '$remoteArchive' . && sudo chmod 0644 '$remoteArchive'"
+try {
+  Write-Step "copying $(Split-Path $remoteArchive -Leaf) -> $localArchive"
+  scp @sshOptions "${PiHost}:${remoteArchive}" $localArchive
+  $code = $LASTEXITCODE
+  if ($code -ne 0) { throw "scp failed with exit code ${code}" }
+}
+finally {
+  Remove-RemoteArchive
 }
 
-# Retain last 14 days
-Get-ChildItem $LocalTarget -Directory -Filter "backup-*" |
-  Sort-Object Name -Descending |
-  Select-Object -Skip 14 |
-  Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+# ---------------------------------------------------------------------------
+# 4. Extract locally and verify every file again on this side
+# ---------------------------------------------------------------------------
+if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
+New-Item -ItemType Directory -Force -Path $dest | Out-Null
 
-Write-Host "[pull] OK $dest"
+$tar = Get-Command tar -ErrorAction SilentlyContinue
+if (-not $tar) { throw "tar.exe not found; Windows 10 1803+ ships it in System32" }
+& $tar.Source -xzf $localArchive -C $dest
+$code = $LASTEXITCODE
+if ($code -ne 0) { throw "tar extraction failed with exit code ${code}" }
+Remove-Item -Force $localArchive -ErrorAction SilentlyContinue
+
+$sumsFile = Join-Path $dest "SHA256SUMS"
+if (-not (Test-Path $sumsFile)) { throw "SHA256SUMS is missing from the extracted backup" }
+
+$verified = 0
+$failed = @()
+foreach ($line in Get-Content -LiteralPath $sumsFile) {
+  if ($line -notmatch '^([0-9a-fA-F]{64})\s+\*?(.+)$') { continue }
+  $expected = $Matches[1].ToLowerInvariant()
+  $relative = $Matches[2].Trim() -replace '^\./', ''
+  $file = Join-Path $dest ($relative -replace '/', [System.IO.Path]::DirectorySeparatorChar)
+  if (-not (Test-Path -LiteralPath $file)) {
+    $failed += "$relative (missing)"
+    continue
+  }
+  $actual = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
+  if ($actual -ne $expected) { $failed += "$relative (hash mismatch)" } else { $verified++ }
+}
+if ($failed.Count -gt 0) {
+  throw "local verification failed for $($failed.Count) file(s): $($failed -join ', ')"
+}
+Write-Step "local verification OK ($verified files)"
+
+# ---------------------------------------------------------------------------
+# 5. Retention: newest $Keep, delete the rest
+# ---------------------------------------------------------------------------
+$dirs = @(Get-ChildItem -Path $LocalTarget -Directory -Filter "backup-*" | Sort-Object Name -Descending)
+if ($dirs.Count -gt $Keep) {
+  $pruned = $dirs | Select-Object -Skip $Keep
+  foreach ($old in $pruned) {
+    Write-Step "pruning $($old.Name) (retention: newest $Keep)"
+    Remove-Item -Recurse -Force -LiteralPath $old.FullName -ErrorAction SilentlyContinue
+  }
+}
+Write-Step "retention: keeping $(($dirs | Select-Object -First $Keep).Count) newest of $($dirs.Count) local backup(s)"
+
+Write-Step "OK $dest"
+exit 0

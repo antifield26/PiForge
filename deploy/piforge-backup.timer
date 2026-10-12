@@ -1,0 +1,14 @@
+[Unit]
+Description=Run the PiForge backup nightly at 03:15
+Documentation=file:/opt/piforge/scripts/backup.sh
+
+[Timer]
+OnCalendar=*-*-* 03:15:00
+# The Pi is not always powered; Persistent=true runs a missed backup after boot.
+Persistent=true
+# Spread the wakeup so the backup does not race other 03:15 cron work on the SD card.
+RandomizedDelaySec=300
+Unit=piforge-backup.service
+
+[Install]
+WantedBy=timers.target

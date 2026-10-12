@@ -1,4 +1,7 @@
 #!/bin/bash
+# LEGACY (reference only). Superseded by scripts/cf-api-dns.sh + scripts/cf-dns-check.sh.
+# See scripts/legacy/README.md — do not run this against the Pi.
+set -euo pipefail
 echo "=== DoH cloudflare-dns.com ==="
 curl -sS -m 15 "https://cloudflare-dns.com/dns-query?name=cloud.antifield.work&type=A" -H "accept: application/dns-json"
 echo

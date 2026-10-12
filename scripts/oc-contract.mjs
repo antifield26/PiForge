@@ -1,21 +1,46 @@
 #!/usr/bin/env node
 /**
  * OpenCode adapter contract smoke — run ON the host where opencode serve is listening.
- * Usage: OPENCODE_PASSWORD=... node oc-contract.mjs [baseUrl]
+ *
+ * Usage: node oc-contract.mjs [baseUrl]
+ *
+ * Password lookup (same order as scripts/lib/env.sh:piforge_opencode_password):
+ *   1. $OPENCODE_PASSWORD, if already exported;
+ *   2. the local OpenCode service registration files below.
+ * It is deliberately NOT read from /tmp/oc-pw.txt any more: that file was a world-readable
+ * credential cache. To supply it by hand without leaking it into the process list or the
+ * shell history, use:  read -r -s -p 'opencode password: ' OPENCODE_PASSWORD; export OPENCODE_PASSWORD
  */
 import { readFileSync } from "node:fs"
 
-const base = (process.argv[2] ?? "http://127.0.0.1:4096").replace(/\/$/, "")
-const password = process.env.OPENCODE_PASSWORD ?? ""
-if (!password) {
-  try {
-    process.env.OPENCODE_PASSWORD = readFileSync("/tmp/oc-pw.txt", "utf8").trim()
-  } catch {
-    console.error("OPENCODE_PASSWORD required")
-    process.exit(1)
+const SERVICE_JSON_CANDIDATES = [
+  "/var/lib/piforge-oc/.config/opencode/service.json",
+  "/var/lib/piforge-oc/.local/state/opencode/service.json",
+  "/home/antifield/.config/opencode/service.json",
+  "/home/antifield/.local/state/opencode/service.json",
+]
+
+function readOpencodePassword() {
+  if (process.env.OPENCODE_PASSWORD) return process.env.OPENCODE_PASSWORD
+  for (const file of SERVICE_JSON_CANDIDATES) {
+    try {
+      const parsed = JSON.parse(readFileSync(file, "utf8"))
+      if (typeof parsed.password === "string" && parsed.password) return parsed.password
+    } catch {
+      // unreadable or not JSON: try the next candidate
+    }
   }
+  return null
 }
-const auth = "Basic " + Buffer.from(`opencode:${process.env.OPENCODE_PASSWORD}`).toString("base64")
+
+const base = (process.argv[2] ?? "http://127.0.0.1:4096").replace(/\/$/, "")
+const password = readOpencodePassword()
+if (!password) {
+  console.error("OPENCODE_PASSWORD required: export it, or make one of these readable:")
+  for (const file of SERVICE_JSON_CANDIDATES) console.error(`  ${file}`)
+  process.exit(1)
+}
+const auth = "Basic " + Buffer.from(`opencode:${password}`).toString("base64")
 
 async function req(method, path, body) {
   const res = await fetch(base + path, {

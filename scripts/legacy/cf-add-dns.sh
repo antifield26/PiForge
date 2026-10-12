@@ -1,5 +1,7 @@
 #!/bin/bash
-set -e
+# LEGACY (reference only). Superseded by scripts/cf-api-dns.sh + scripts/cf-dns-check.sh.
+# See scripts/legacy/README.md — do not run this against the Pi.
+set -euo pipefail
 TUNNEL=b6683fba-30e5-4f49-a785-5680e7a30e21
 HOST=cloud.antifield.work
 

@@ -1,0 +1,22 @@
+# Deployment artifacts must keep LF endings: CRLF breaks bash, systemd units and sudoers.
+# core.autocrlf is commonly true on Windows, which would otherwise rewrite these on checkout.
+* text=auto
+
+*.sh text eol=lf
+*.mjs text eol=lf
+*.js text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.service text eol=lf
+*.timer text eol=lf
+*.conf text eol=lf
+deploy/sudoers.d-piforge-gw text eol=lf
+config/services.allowlist.json text eol=lf
+
+# Windows-side helpers
+*.ps1 text eol=crlf
+*.psm1 text eol=crlf

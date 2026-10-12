@@ -1,3 +1,5 @@
+// LEGACY (reference only). Superseded by scripts/cf-dns-check.sh (see scripts/legacy/README.md).
+// Hardcodes a resolver IP that only existed on one network. Do not run against the Pi.
 import { resolve4, resolveCname, resolveNs, setServers } from "node:dns/promises"
 
 const host = process.argv[2] || "cloud.antifield.work"

@@ -1,7 +1,41 @@
 #!/usr/bin/env node
+// Credentials: $ADMIN_PASSWORD if exported, else gateway.env read directly (never sourced,
+// never printed) so the password does not have to be inlined in the shell command.
+import { readFileSync } from "node:fs"
+
+const ENV_CANDIDATES = ["/etc/piforge/gateway.env", "/home/antifield/piforge/gateway.env"]
+
+function envGet(env, key) {
+  const line = env.split("\n").find((l) => l.trimStart().startsWith(key + "="))
+  if (line === undefined) return ""
+  let value = line.slice(line.indexOf("=") + 1).replace(/\r$/, "")
+  for (const quote of ['"', "'"]) {
+    if (value.length >= 2 && value.startsWith(quote) && value.endsWith(quote)) {
+      value = value.slice(1, -1)
+    }
+  }
+  return value
+}
+
+function readGatewayEnv() {
+  for (const file of ENV_CANDIDATES) {
+    try {
+      return readFileSync(file, "utf8")
+    } catch {
+      // try the next candidate
+    }
+  }
+  return ""
+}
+
 const base = process.env.BASE || "http://127.0.0.1:8787"
-const user = process.env.ADMIN_USER || "admin"
-const pass = process.env.ADMIN_PASSWORD
+const env = readGatewayEnv()
+const user = process.env.ADMIN_USER || envGet(env, "ADMIN_USER") || "admin"
+const pass = process.env.ADMIN_PASSWORD || envGet(env, "ADMIN_PASSWORD")
+if (!pass) {
+  console.error(`ADMIN_PASSWORD is not exported and not set in ${ENV_CANDIDATES.join(" or ")}`)
+  process.exit(1)
+}
 
 const cookieJar = new Map()
 

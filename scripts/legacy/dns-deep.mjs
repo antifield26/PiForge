@@ -1,3 +1,5 @@
+// LEGACY (reference only). Superseded by scripts/cf-dns-check.sh (see scripts/legacy/README.md).
+// One-shot propagation triage: three hostnames x five resolvers. Do not run against the Pi.
 import { Resolver } from "node:dns/promises"
 
 const hosts = ["cloud.antifield.work", "antifield.work", "cfargotunnel.com"]

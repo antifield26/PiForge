@@ -1,0 +1,22 @@
+[Unit]
+Description=PiForge nightly backup (wb.db + /etc/piforge + OpenCode metadata)
+Documentation=file:/opt/piforge/scripts/backup.sh
+After=local-fs.target
+
+[Service]
+Type=oneshot
+# Runs as root on purpose: it must read /etc/piforge/gateway.env (0640 root:piforge-gw),
+# /etc/piforge/opencode.env (0640 root:piforge-oc) and both /var/lib/piforge* trees.
+User=root
+Group=root
+
+# Optional overrides only (BACKUP_TARGET, KEEP, PIFORGE_SKIP_RECORD). Never secrets.
+EnvironmentFile=-/etc/piforge/backup.env
+
+ExecStart=/opt/piforge/scripts/backup.sh
+
+# Exit code 2 from backup.sh means "database missing" and must surface as a failed unit.
+Nice=10
+IOSchedulingClass=idle
+PrivateTmp=true
+NoNewPrivileges=true
