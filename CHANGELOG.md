@@ -24,6 +24,8 @@
 
 
 ### Added
+- 2026-10-13 路 **P3.5–P3.7 落地**：docs/OPENCODE-UPGRADE.md 升级 Playbook + scripts/oc-snapshot.sh（实机快照 v2.0.26 成功）；scripts/release-check.ps1 发布门禁；restore-drill 写回 
+estore_drill_* settings，备份 API/面板显示 lastStatus/连续失败/演练结果（实机 drill PASS 后 lastRestoreDrill.ok=true）。回归 erify-e2e 39/39，本地 44/44。
 - 2026-10-13 路 **P3.4 审计检索**：service_audit 过滤（unit/action/allowed/时间）+ login_audit 列表；CSV 导出（引号转义、limit 5000）；前端审计页签（服务控制/登录）。实机 erify-p3-audit.mjs 6/6，回归 erify-e2e 39/39。
 - 2026-10-13 路 **P3.1–P3.3 实机验收通过**：部署至 RPI5 后 erify-e2e 39/39；新增 scripts/verify-p3.mjs（阈值读写、三类告警触发与冷却、全部已读、会话吊销/登出其他）12/12；红线复查（4096/8787 仅 localhost、Environment 无密钥）通过。
 - 2026-10-13 路 **P3.1–P3.3 开工落地**：lerts/login_audit 表；告警规则（备份失败/partial、服务掉线、SD 日写入、内存不足）+ 去重冷却 + 可选 webhook（ALERT_WEBHOOK_URL）；/console/alerts* API 与阈值配置；前端通知面板；会话列表/吊销/登出其他 + login_audit 记录。本地 

@@ -103,16 +103,16 @@
 | P3.4.2 | login_audit 记录 | P3.4 | done | 成功/失败 + IP + UA 摘要 | — |
 | P3.4.3 | 审计页签 + CSV 导出 | P3.4 | done | 导出限流；无越权 | — |
 | P3.4.4 | 审计测试 | P3.4 | done | 401/403/过滤/导出测试全绿 | — |
-| P3.5.1 | docs/OPENCODE-UPGRADE.md | P3.5 | pending | 备份→升级→契约→回滚；版本对照模板 | AGENTS §6 |
-| P3.5.2 | oc-contract 参数化 | P3.5 | pending | 一键可跑；失败非零 | — |
-| P3.5.3 | 升级前快照脚本 | P3.5 | pending | 幂等；校验通过 | — |
-| P3.5.4 | 升级演练记录 | P3.5 | pending | 桌面推演一次并记录差异 | — |
-| P3.6.1 | release-check 脚本 | P3.6 | pending | 本地 verify + 干跑清单 | — |
-| P3.6.2 | 远端门禁：deploy 后强制 e2e | P3.6 | pending | 失败非零退出 | — |
-| P3.6.3 | AGENTS/README 命令序对齐 | P3.6 | pending | 可照抄执行 | AGENTS §5 |
-| P3.7.1 | 备份 API：drill/连续失败 | P3.7 | pending | 与 backup_runs 对齐 | — |
-| P3.7.2 | 备份卡片趋势 + drill 状态 | P3.7 | pending | 状态一眼可读 | — |
-| P3.7.3 | 实机联动告警验证 | P3.7 | pending | 模拟失败进告警 | P3.1 |
+| P3.5.1 | docs/OPENCODE-UPGRADE.md | P3.5 | done | 备份→升级→契约→回滚；版本对照模板 | AGENTS §6 |
+| P3.5.2 | oc-contract 参数化 | P3.5 | done | 一键可跑；失败非零 | — |
+| P3.5.3 | 升级前快照脚本 | P3.5 | done | 幂等；校验通过 | — |
+| P3.5.4 | 升级演练记录 | P3.5 | done | 桌面推演一次并记录差异 | — |
+| P3.6.1 | release-check 脚本 | P3.6 | done | 本地 verify + 干跑清单 | — |
+| P3.6.2 | 远端门禁：deploy 后强制 e2e | P3.6 | done | 失败非零退出 | — |
+| P3.6.3 | AGENTS/README 命令序对齐 | P3.6 | done | 可照抄执行 | AGENTS §5 |
+| P3.7.1 | 备份 API：drill/连续失败 | P3.7 | done | 与 backup_runs 对齐 | — |
+| P3.7.2 | 备份卡片趋势 + drill 状态 | P3.7 | done | 状态一眼可读 | — |
+| P3.7.3 | 实机联动告警验证 | P3.7 | done | 模拟失败进告警 | P3.1 |
 | P3.A | P3 综合出口验收 | P3 | pending | 告警/会话/审计/Playbook/门禁/e2e 全绿 | 本系列 |
 
 ---

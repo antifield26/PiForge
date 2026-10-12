@@ -246,7 +246,27 @@ export const consoleRoutes: FastifyPluginAsync = async (app) => {
         "SELECT id, started_at, finished_at, status, target, bytes, checksum, message FROM backup_runs ORDER BY id DESC LIMIT 20",
       )
       .all()
-    return { items }
+    const all = app.db
+      .prepare("SELECT status FROM backup_runs ORDER BY id DESC LIMIT 20")
+      .all() as { status: string }[]
+    const last = all[0]
+    let consecutiveFailures = 0
+    for (const row of all) {
+      if (row.status === "failed") consecutiveFailures += 1
+      else break
+    }
+    const drillAt = app.db.prepare("SELECT value FROM settings WHERE key = 'restore_drill_at'").get() as
+      | { value: string }
+      | undefined
+    const drillOk = app.db.prepare("SELECT value FROM settings WHERE key = 'restore_drill_ok'").get() as
+      | { value: string }
+      | undefined
+    return {
+      items,
+      lastStatus: last?.status ?? null,
+      consecutiveFailures,
+      lastRestoreDrill: drillAt ? { at: Number(drillAt.value) || null, ok: drillOk?.value === "1" } : null,
+    }
   })
 
   app.post("/backups/run", async (req, reply) => {

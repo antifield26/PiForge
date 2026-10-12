@@ -98,8 +98,34 @@ else
 fi
 
 if ((FAILED)); then
+  # Record the drill outcome so the workbench backup panel can show it (P3.7).
+  if command -v node >/dev/null 2>&1 && [[ -f "${DB_PATH:-/var/lib/piforge/wb.db}" ]]; then
+    node -e '
+      const { DatabaseSync } = require("node:sqlite")
+      const db = new DatabaseSync(process.argv[1])
+      db.exec("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+      db.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+        .run("restore_drill_at", String(Date.now()))
+      db.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+        .run("restore_drill_ok", "0")
+      db.close()
+    ' "${DB_PATH:-/var/lib/piforge/wb.db}" 2>/dev/null || true
+  fi
   printf '[restore] FAIL: drill failed for %s\n' "$LATEST" >&2
   exit 1
+fi
+
+if command -v node >/dev/null 2>&1 && [[ -f "${DB_PATH:-/var/lib/piforge/wb.db}" ]]; then
+  node -e '
+    const { DatabaseSync } = require("node:sqlite")
+    const db = new DatabaseSync(process.argv[1])
+    db.exec("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    db.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+      .run("restore_drill_at", String(Date.now()))
+    db.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+      .run("restore_drill_ok", "1")
+    db.close()
+  ' "${DB_PATH:-/var/lib/piforge/wb.db}" 2>/dev/null || true
 fi
 
 printf '[restore] PASS: %s restores cleanly (%s files, %s bytes)\n' \

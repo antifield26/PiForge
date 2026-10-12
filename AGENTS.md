@@ -59,6 +59,11 @@
 
 ### 本地构建与验证
 
+`powershell
+# 一键门禁（本地 verify + 同步部署 + 实机 e2e + 红线检查）
+powershell -File scripts/release-check.ps1
+`
+
 ```powershell
 npm install
 

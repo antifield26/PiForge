@@ -664,3 +664,21 @@ test("audit CSV export is capped and annotated", async (t) => {
   const anon = await app.inject({ method: "GET", url: "/api/v1/console/audit/export" })
   assert.equal(anon.statusCode, 401)
 })
+
+
+// ---------------------------------------------------------------- backup panel meta (P3.7)
+
+test("backup list exposes lastStatus, consecutive failures and restore drill", async (t) => {
+  const { app, cookie, db } = await withApp(t)
+  db.prepare(
+    "INSERT INTO backup_runs (started_at, finished_at, status, target, message) VALUES (?,?,?,?,?)",
+  ).run(Date.now(), Date.now(), "failed", "local", "boom")
+  db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run("restore_drill_at", String(Date.now()))
+  db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run("restore_drill_ok", "1")
+
+  const res = await app.inject({ method: "GET", url: "/api/v1/console/backups", headers: auth(cookie) })
+  assert.equal(res.statusCode, 200)
+  assert.equal(res.json().lastStatus, "failed")
+  assert.equal(res.json().consecutiveFailures, 1)
+  assert.equal(res.json().lastRestoreDrill.ok, true)
+})

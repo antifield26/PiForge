@@ -17,6 +17,11 @@ export function OpsPanel() {
   const [sd, setSd] = createSignal<SdHealth | null>(null)
   const [sessions, setSessions] = createSignal<AgentSession[]>([])
   const [backups, setBackups] = createSignal<BackupRun[]>([])
+  const [backupMeta, setBackupMeta] = createSignal<{
+    lastStatus: string | null
+    consecutiveFailures: number
+    lastRestoreDrill: { at: number | null; ok: boolean } | null
+  } | null>(null)
   const [err, setErr] = createSignal("")
   const [note, setNote] = createSignal("")
   const [confirming, setConfirming] = createSignal(false)
@@ -26,7 +31,12 @@ export function OpsPanel() {
     const [s, a, b] = await Promise.allSettled([
       api<SdHealth>("/api/v1/console/sd"),
       api<{ items: AgentSession[] }>("/api/v1/agent/sessions"),
-      api<{ items: BackupRun[] }>("/api/v1/console/backups"),
+      api<{
+        items: BackupRun[]
+        lastStatus: string | null
+        consecutiveFailures: number
+        lastRestoreDrill: { at: number | null; ok: boolean } | null
+      }>("/api/v1/console/backups"),
     ])
 
     const problems: string[] = []
@@ -34,8 +44,14 @@ export function OpsPanel() {
     else problems.push(`SD：${errorText(s.reason)}`)
     if (a.status === "fulfilled") setSessions(a.value.items ?? [])
     else problems.push(`会话：${errorText(a.reason)}`)
-    if (b.status === "fulfilled") setBackups(b.value.items ?? [])
-    else problems.push(`备份：${errorText(b.reason)}`)
+    if (b.status === "fulfilled") {
+      setBackups(b.value.items ?? [])
+      setBackupMeta({
+        lastStatus: b.value.lastStatus ?? null,
+        consecutiveFailures: b.value.consecutiveFailures ?? 0,
+        lastRestoreDrill: b.value.lastRestoreDrill ?? null,
+      })
+    } else problems.push(`备份：${errorText(b.reason)}`)
     setErr(problems.join("；"))
   }
 
@@ -141,6 +157,46 @@ export function OpsPanel() {
             {backupBusy() ? "备份中…" : "手动备份"}
           </button>
         </div>
+        <Show when={backupMeta()}>
+          <div class="mb-3 flex flex-wrap gap-2 text-xs">
+            <span
+              class={`rounded px-2 py-1 ${
+                backupMeta()!.lastStatus === "ok"
+                  ? "bg-green-100 text-green-800"
+                  : backupMeta()!.lastStatus
+                    ? "bg-red-100 text-red-800"
+                    : "bg-black/5 text-[var(--pf-grey-700)]"
+              }`}
+            >
+              最近状态：{backupMeta()!.lastStatus ? backupStatus(backupMeta()!.lastStatus!) : "尚无记录"}
+            </span>
+            <span
+              class={`rounded px-2 py-1 ${
+                backupMeta()!.consecutiveFailures > 0 ? "bg-red-100 text-red-800" : "bg-black/5 text-[var(--pf-grey-700)]"
+              }`}
+            >
+              连续失败：{backupMeta()!.consecutiveFailures}
+            </span>
+            <span
+              class={`rounded px-2 py-1 ${
+                backupMeta()!.lastRestoreDrill
+                  ? backupMeta()!.lastRestoreDrill!.ok
+                    ? "bg-green-100 text-green-800"
+                    : "bg-red-100 text-red-800"
+                  : "bg-black/5 text-[var(--pf-grey-700)]"
+              }`}
+            >
+              恢复演练：
+              {backupMeta()!.lastRestoreDrill
+                ? `${backupMeta()!.lastRestoreDrill!.ok ? "PASS" : "FAIL"}${
+                    backupMeta()!.lastRestoreDrill!.at
+                      ? " · " + new Date(backupMeta()!.lastRestoreDrill!.at!).toLocaleString()
+                      : ""
+                  }`
+                : "未记录"}
+            </span>
+          </div>
+        </Show>
         <Show when={confirming()}>
           <div class="mb-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm">
             确认执行 <b>手动备份</b>？备份脚本运行期间可能产生较多磁盘写入。
