@@ -1,48 +1,47 @@
 import type { FastifyPluginAsync } from "fastify"
 import { requireAuth } from "../auth/routes.js"
 import { queryMetrics } from "./metrics.js"
-import type { MetricKind } from "@piforge/shared"
-import type { Db } from "../../db/index.js"
+import type { MetricKind, MetricsSummary } from "@piforge/shared"
+import { clampInt, sendError } from "../../util/validate.js"
 
-interface AppWithDb {
-  db: Db
-}
+const KINDS: MetricKind[] = ["cpu", "mem", "temp", "disk_write"]
 
 export const historyRoutes: FastifyPluginAsync = async (app) => {
-  app.get<{ Querystring: { kind?: string; from?: string; to?: string; format?: string } }>(
+  app.get<{ Querystring: { kind?: string; from?: string; to?: string; format?: string; limit?: string } }>(
     "/metrics/export",
     async (req, reply) => {
       const auth = requireAuth(req)
-      if (!auth) return reply.code(401).send({ error: { code: "UNAUTHORIZED", message: "not logged in" } })
+      if (!auth) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
       const kind = (req.query.kind ?? "temp") as MetricKind
-      const to = Number(req.query.to ?? Date.now())
-      const from = Number(req.query.from ?? to - 7 * 86400_000)
-      const format = req.query.format === "csv" ? "csv" : "json"
-      const items = queryMetrics((app as unknown as AppWithDb).db, kind, from, to)
+      if (!KINDS.includes(kind)) {
+        return sendError(reply, 400, "BAD_REQUEST", `kind must be one of ${KINDS.join(", ")}`)
+      }
+      const to = clampInt(req.query.to, Date.now(), 0, Number.MAX_SAFE_INTEGER)
+      const from = clampInt(req.query.from, to - 7 * 86400_000, 0, Number.MAX_SAFE_INTEGER)
+      const limit = clampInt(req.query.limit, 50_000, 1, 200_000)
+      const items = queryMetrics(app.db, kind, from, to, limit)
 
-      if (format === "csv") {
+      if (req.query.format === "csv") {
         const lines = ["ts,kind,value,iso", ...items.map((i) => `${i.ts},${i.kind},${i.value},${new Date(i.ts).toISOString()}`)]
         reply.header("content-type", "text/csv; charset=utf-8")
         reply.header("content-disposition", `attachment; filename="metrics-${kind}-${from}-${to}.csv"`)
         return reply.send(lines.join("\n"))
       }
-      return { kind, from, to, items }
+      return { kind, from, to, count: items.length, items }
     },
   )
 
   app.get<{ Querystring: { from?: string; to?: string } }>("/metrics/summary", async (req, reply) => {
     const auth = requireAuth(req)
-    if (!auth) return reply.code(401).send({ error: { code: "UNAUTHORIZED", message: "not logged in" } })
-    const to = Number(req.query.to ?? Date.now())
-    const from = Number(req.query.from ?? to - 24 * 3600_000)
-    const db = (app as unknown as AppWithDb).db
-    const kinds: MetricKind[] = ["cpu", "mem", "temp", "disk_write"]
-    const summary = kinds.map((k) => {
-      const items = queryMetrics(db, k, from, to)
-      if (items.length === 0) return { kind: k, count: 0 }
+    if (!auth) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
+    const to = clampInt(req.query.to, Date.now(), 0, Number.MAX_SAFE_INTEGER)
+    const from = clampInt(req.query.from, to - 24 * 3600_000, 0, Number.MAX_SAFE_INTEGER)
+    const summary: MetricsSummary[] = KINDS.map((kind) => {
+      const items = queryMetrics(app.db, kind, from, to)
+      if (items.length === 0) return { kind, count: 0 }
       const vals = items.map((i) => i.value)
       return {
-        kind: k,
+        kind,
         count: items.length,
         min: Math.min(...vals),
         max: Math.max(...vals),

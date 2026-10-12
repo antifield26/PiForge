@@ -1,38 +1,16 @@
-import Fastify from "fastify"
-import cookie from "@fastify/cookie"
-import fastifyStatic from "@fastify/static"
-import { existsSync } from "node:fs"
-import { join, resolve } from "node:path"
-import { authRoutes, ensureAdminUser } from "./modules/auth/routes.js"
-import { consoleRoutes } from "./modules/console/routes.js"
-import { logsRoutes } from "./modules/console/logs.js"
-import { historyRoutes } from "./modules/console/history.js"
-import { perfRoutes } from "./modules/console/perf.js"
-import { agentRoutes, createAgentAdapter } from "./modules/agent/routes.js"
-import { workbenchRoutes } from "./modules/workbench/routes.js"
-import { cloudRoutes } from "./modules/workbench/cloud.js"
+import { buildApp } from "./app.js"
 import { loadConfig } from "./config/index.js"
-import { openDb, pragmaInfo, type Db } from "./db/index.js"
-
-declare module "fastify" {
-  interface FastifyInstance {
-    db: Db
-    openCode: import("./modules/agent/adapter.js").OpenCodeAdapter
-  }
-  interface FastifyRequest {
-    db: Db
-    userId?: string
-  }
-}
+import { ensureAdminUser } from "./modules/auth/routes.js"
+import { checkpoint, pragmaInfo } from "./db/index.js"
 
 async function main() {
   const config = loadConfig()
-  const db: Db = openDb(config.dbPath)
+  const { app, db } = await buildApp(config)
 
-  const user = process.env.ADMIN_USER ?? "admin"
-  const pass = process.env.ADMIN_PASSWORD
-  if (pass) {
-    await ensureAdminUser(db, user, pass)
+  const username = process.env.ADMIN_USER ?? "admin"
+  const password = process.env.ADMIN_PASSWORD
+  if (password) {
+    await ensureAdminUser(db, username, password)
   } else {
     const count = db.prepare("SELECT COUNT(*) AS n FROM users").get() as { n: number }
     if (Number(count.n) === 0) {
@@ -40,79 +18,33 @@ async function main() {
     }
   }
 
-  const app = Fastify({ logger: { level: config.logLevel } })
-  app.addContentTypeParser("application/json", { parseAs: "string" }, (_req, body, done) => {
-    if (!body || body === "") return done(null, {})
+  const shutdown = async (signal: string) => {
+    app.log.info({ signal }, "shutting down")
     try {
-      done(null, JSON.parse(body as string))
-    } catch {
-      done(new Error("invalid json"), undefined)
+      checkpoint(db)
+      await app.close()
+    } finally {
+      process.exit(0)
     }
-  })
-  app.addContentTypeParser("*", { parseAs: "string" }, (_req, body, done) => {
-    done(null, body ? {} : {})
-  })
-
-  await app.register(cookie, { secret: config.sessionSecret })
-
-  const openCode = createAgentAdapter({
-    baseUrl: config.openCodeUrl,
-    password: process.env.OPENCODE_PASSWORD ?? "",
-  })
-  app.decorate("openCode", openCode)
-  app.decorate("db", db)
-  app.decorateRequest("db", { getter: () => db })
-
-  await app.register(authRoutes, { prefix: "/api/v1/auth" })
-  await app.register(workbenchRoutes, { prefix: "/api/v1" })
-  await app.register(cloudRoutes, { prefix: "/api/v1" })
-  await app.register(consoleRoutes, { prefix: "/api/v1/console" })
-  await app.register(logsRoutes, { prefix: "/api/v1/console" })
-  await app.register(historyRoutes, { prefix: "/api/v1/console" })
-  await app.register(perfRoutes, { prefix: "/api/v1/console" })
-  await app.register(agentRoutes, { prefix: "/api/v1/agent" })
-
-  app.get("/api/v1/health", async () => ({
-    ok: true,
-    ts: Date.now(),
-    db: {
-      journal_mode: pragmaInfo(db, "journal_mode"),
-      synchronous: pragmaInfo(db, "synchronous"),
-    },
-  }))
-
-  // Serve web SPA (built apps/web/dist)
-  const webDist = resolve(process.env.WEB_DIST || join(process.cwd(), "apps/web/dist"))
-  if (existsSync(join(webDist, "index.html"))) {
-    await app.register(fastifyStatic, {
-      root: webDist,
-      prefix: "/",
-      index: ["index.html"],
-      wildcard: false,
-    })
-    // SPA fallback for non-API routes
-    app.setNotFoundHandler((req, reply) => {
-      if (req.url.startsWith("/api/")) {
-        return reply.code(404).send({ error: { code: "NOT_FOUND", message: "route not found" } })
-      }
-      return reply.sendFile("index.html")
-    })
-  } else {
-    app.get("/", async () => ({
-      ok: true,
-      message: "PiForge API up; web dist not found",
-      webDist,
-    }))
   }
+  process.on("SIGTERM", () => void shutdown("SIGTERM"))
+  process.on("SIGINT", () => void shutdown("SIGINT"))
 
   await app.listen({ host: config.host, port: config.port })
   app.log.info(
-    { journal_mode: pragmaInfo(db, "journal_mode"), synchronous: pragmaInfo(db, "synchronous") },
-    "database pragmas",
+    {
+      host: config.host,
+      port: config.port,
+      db: config.dbPath,
+      journal_mode: pragmaInfo(db, "journal_mode"),
+      synchronous: pragmaInfo(db, "synchronous"),
+      uploadLimitMb: Math.round(config.uploadBodyLimitBytes / 1024 / 1024),
+    },
+    "gateway ready",
   )
 }
 
 main().catch((err) => {
-  console.error(err)
+  console.error(err instanceof Error ? err.message : err)
   process.exit(1)
 })

@@ -10,6 +10,7 @@ export function openDb(path: string): Db {
   db.exec("PRAGMA journal_mode = WAL")
   db.exec("PRAGMA synchronous = NORMAL")
   db.exec("PRAGMA foreign_keys = ON")
+  db.exec("PRAGMA busy_timeout = 5000")
   migrate(db)
   return db
 }
@@ -109,13 +110,11 @@ function migrate(db: Db) {
       message TEXT
     );
 
-    CREATE TABLE IF NOT EXISTS agent_tasks (
-      id TEXT PRIMARY KEY,
-      session_id TEXT NOT NULL,
-      title TEXT NOT NULL,
-      status TEXT NOT NULL,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
+    CREATE TABLE IF NOT EXISTS sd_health (
+      ts INTEGER PRIMARY KEY,
+      total_write_bytes INTEGER NOT NULL,
+      day_write_bytes INTEGER NOT NULL,
+      estimate_days_left REAL
     );
 
     CREATE TABLE IF NOT EXISTS settings (
@@ -127,11 +126,24 @@ function migrate(db: Db) {
     CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
     CREATE INDEX IF NOT EXISTS idx_audit_ts ON service_audit(ts);
     CREATE INDEX IF NOT EXISTS idx_metrics_ts ON metrics_points(ts);
+    CREATE INDEX IF NOT EXISTS idx_versions_file ON cloud_file_versions(file_id);
   `)
+
+  dropUnusedTables(db)
 }
 
-export function walCheckpoint(db: Db) {
-  db.exec("PRAGMA wal_checkpoint(TRUNCATE)")
+/**
+ * `agent_tasks` was created in P0 but no code path ever read or wrote it (the OpenCode session
+ * list is the task view). Drop it from databases created before the fix — but only while empty,
+ * so a manual insert can never be lost silently.
+ */
+function dropUnusedTables(db: Db) {
+  try {
+    const row = db.prepare("SELECT COUNT(*) AS n FROM agent_tasks").get() as { n: number } | undefined
+    if (row && Number(row.n) === 0) db.exec("DROP TABLE agent_tasks")
+  } catch {
+    /* table already gone */
+  }
 }
 
 export function pragmaInfo(db: Db, name: string): string {
@@ -139,4 +151,46 @@ export function pragmaInfo(db: Db, name: string): string {
   if (!row) return ""
   const vals = Object.values(row)
   return String(vals[0] ?? "")
+}
+
+export function getSetting(db: Db, key: string): string | null {
+  const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key) as { value: string } | undefined
+  return row?.value ?? null
+}
+
+export function setSetting(db: Db, key: string, value: string): void {
+  db.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(
+    key,
+    value,
+  )
+}
+
+export function getSettingNumber(db: Db, key: string): number | null {
+  const raw = getSetting(db, key)
+  if (raw === null) return null
+  const n = Number(raw)
+  return Number.isFinite(n) ? n : null
+}
+
+/** Drop metric points older than the retention window; returns rows removed. */
+export function pruneMetrics(db: Db, retentionDays: number, now = Date.now()): number {
+  if (!Number.isFinite(retentionDays) || retentionDays <= 0) return 0
+  const cutoff = now - retentionDays * 24 * 3600_000
+  const res = db.prepare("DELETE FROM metrics_points WHERE ts < ?").run(cutoff)
+  return Number(res.changes)
+}
+
+/** Keep sd_health bounded: one row per hour, retention in days. */
+export function pruneSdHealth(db: Db, retentionDays = 365, now = Date.now()): number {
+  const cutoff = now - retentionDays * 24 * 3600_000
+  const res = db.prepare("DELETE FROM sd_health WHERE ts < ?").run(cutoff)
+  return Number(res.changes)
+}
+
+export function checkpoint(db: Db): void {
+  try {
+    db.exec("PRAGMA wal_checkpoint(TRUNCATE)")
+  } catch {
+    /* best effort on shutdown */
+  }
 }

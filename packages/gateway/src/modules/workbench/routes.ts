@@ -1,18 +1,11 @@
 import type { FastifyPluginAsync } from "fastify"
 import { randomUUID } from "node:crypto"
-import type { SQLInputValue } from "node:sqlite"
 import { requireAuth } from "../auth/routes.js"
-import type { Db } from "../../db/index.js"
+import { asFiniteNumber, asOptionalString, asStringArray, asTrimmedString, isTodoStatus, sendError } from "../../util/validate.js"
 
-interface WbApp {
-  db: Db
-}
-
-type Param = SQLInputValue
-
-function now() {
-  return Date.now()
-}
+const MAX_TITLE = 300
+const MAX_NOTES = 20_000
+const MAX_BODY = 200_000
 
 function parseTags(raw: string | null): string[] {
   if (!raw) return []
@@ -28,13 +21,13 @@ export const workbenchRoutes: FastifyPluginAsync = async (app) => {
   // ---- Todos ----
   app.get<{ Querystring: { q?: string; status?: string } }>("/todos", async (req, reply) => {
     const auth = requireAuth(req)
-    if (!auth) return reply.code(401).send({ error: { code: "UNAUTHORIZED", message: "not logged in" } })
-    const db = (app as unknown as WbApp).db
-    const q = req.query.q?.trim()
+    if (!auth) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
+    const q = asTrimmedString(req.query.q, 200)
     const status = req.query.status
     let sql = "SELECT id, title, notes, status, due_at, created_at, updated_at FROM todos WHERE user_id = ?"
-    const params: Param[] = [auth.userId]
+    const params: (string | number)[] = [auth.userId]
     if (status) {
+      if (!isTodoStatus(status)) return sendError(reply, 400, "BAD_REQUEST", "invalid status filter")
       sql += " AND status = ?"
       params.push(status)
     }
@@ -43,7 +36,7 @@ export const workbenchRoutes: FastifyPluginAsync = async (app) => {
       params.push(`%${q}%`, `%${q}%`)
     }
     sql += " ORDER BY updated_at DESC LIMIT 200"
-    const rows = db.prepare(sql).all(...params) as {
+    const rows = app.db.prepare(sql).all(...params) as {
       id: string
       title: string
       notes: string | null
@@ -65,66 +58,65 @@ export const workbenchRoutes: FastifyPluginAsync = async (app) => {
     }
   })
 
-  app.post<{ Body: { title?: string; notes?: string; status?: string; dueAt?: number } }>(
-    "/todos",
-    async (req, reply) => {
-      const auth = requireAuth(req)
-      if (!auth) return reply.code(401).send({ error: { code: "UNAUTHORIZED", message: "not logged in" } })
-      const title = req.body?.title?.trim()
-      if (!title) return reply.code(400).send({ error: { code: "BAD_REQUEST", message: "title required" } })
-      const db = (app as unknown as WbApp).db
-      const id = randomUUID()
-      const ts = now()
-      db.prepare(
-        "INSERT INTO todos (id, user_id, title, notes, status, due_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
-      ).run(id, auth.userId, title, req.body?.notes ?? null, req.body?.status ?? "open", req.body?.dueAt ?? null, ts, ts)
-      return reply.code(201).send({
-        id,
-        title,
-        notes: req.body?.notes ?? null,
-        status: req.body?.status ?? "open",
-        dueAt: req.body?.dueAt ?? null,
-        createdAt: ts,
-        updatedAt: ts,
-      })
-    },
-  )
+  app.post<{ Body: { title?: string; notes?: string; status?: string; dueAt?: number } }>("/todos", async (req, reply) => {
+    const auth = requireAuth(req)
+    if (!auth) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
+    const title = asTrimmedString(req.body?.title, MAX_TITLE)
+    if (!title) return sendError(reply, 400, "BAD_REQUEST", "title required")
+    const status = req.body?.status ?? "open"
+    if (!isTodoStatus(status)) return sendError(reply, 400, "BAD_REQUEST", "invalid status")
+    const notes = asOptionalString(req.body?.notes, MAX_NOTES)
+    const dueAt = req.body?.dueAt === undefined || req.body?.dueAt === null ? null : asFiniteNumber(req.body.dueAt)
+    if (req.body?.dueAt !== undefined && req.body?.dueAt !== null && dueAt === null) {
+      return sendError(reply, 400, "BAD_REQUEST", "dueAt must be a number")
+    }
+    const id = randomUUID()
+    const ts = Date.now()
+    app.db
+      .prepare("INSERT INTO todos (id, user_id, title, notes, status, due_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)")
+      .run(id, auth.userId, title, notes, status, dueAt, ts, ts)
+    return reply.code(201).send({ id, title, notes, status, dueAt, createdAt: ts, updatedAt: ts })
+  })
 
   app.patch<{ Params: { id: string }; Body: { title?: string; notes?: string; status?: string; dueAt?: number | null } }>(
     "/todos/:id",
     async (req, reply) => {
       const auth = requireAuth(req)
-      if (!auth) return reply.code(401).send({ error: { code: "UNAUTHORIZED", message: "not logged in" } })
-      const db = (app as unknown as WbApp).db
-      const existing = db
+      if (!auth) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
+      const existing = app.db
         .prepare("SELECT id FROM todos WHERE id = ? AND user_id = ?")
         .get(req.params.id, auth.userId) as { id: string } | undefined
-      if (!existing) return reply.code(404).send({ error: { code: "NOT_FOUND", message: "todo not found" } })
+      if (!existing) return sendError(reply, 404, "NOT_FOUND", "todo not found")
 
       const fields: string[] = []
-      const params: Param[] = []
+      const params: (string | number | null)[] = []
       if (req.body?.title !== undefined) {
+        const title = asTrimmedString(req.body.title, MAX_TITLE)
+        if (!title) return sendError(reply, 400, "BAD_REQUEST", "title cannot be empty")
         fields.push("title = ?")
-        params.push(req.body.title)
+        params.push(title)
       }
       if (req.body?.notes !== undefined) {
         fields.push("notes = ?")
-        params.push(req.body.notes)
+        params.push(asOptionalString(req.body.notes, MAX_NOTES))
       }
       if (req.body?.status !== undefined) {
+        if (!isTodoStatus(req.body.status)) return sendError(reply, 400, "BAD_REQUEST", "invalid status")
         fields.push("status = ?")
         params.push(req.body.status)
       }
       if (req.body?.dueAt !== undefined) {
+        const dueAt = req.body.dueAt === null ? null : asFiniteNumber(req.body.dueAt)
+        if (req.body.dueAt !== null && dueAt === null) return sendError(reply, 400, "BAD_REQUEST", "dueAt must be a number")
         fields.push("due_at = ?")
-        params.push(req.body.dueAt)
+        params.push(dueAt)
       }
       fields.push("updated_at = ?")
-      params.push(now())
+      params.push(Date.now())
       params.push(req.params.id, auth.userId)
-      db.prepare(`UPDATE todos SET ${fields.join(", ")} WHERE id = ? AND user_id = ?`).run(...params)
+      app.db.prepare(`UPDATE todos SET ${fields.join(", ")} WHERE id = ? AND user_id = ?`).run(...params)
 
-      const row = db
+      const row = app.db
         .prepare("SELECT id, title, notes, status, due_at, created_at, updated_at FROM todos WHERE id = ?")
         .get(req.params.id) as {
         id: string
@@ -149,28 +141,26 @@ export const workbenchRoutes: FastifyPluginAsync = async (app) => {
 
   app.delete<{ Params: { id: string } }>("/todos/:id", async (req, reply) => {
     const auth = requireAuth(req)
-    if (!auth) return reply.code(401).send({ error: { code: "UNAUTHORIZED", message: "not logged in" } })
-    const db = (app as unknown as WbApp).db
-    const res = db.prepare("DELETE FROM todos WHERE id = ? AND user_id = ?").run(req.params.id, auth.userId)
-    if (Number(res.changes) === 0) return reply.code(404).send({ error: { code: "NOT_FOUND", message: "todo not found" } })
+    if (!auth) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
+    const res = app.db.prepare("DELETE FROM todos WHERE id = ? AND user_id = ?").run(req.params.id, auth.userId)
+    if (Number(res.changes) === 0) return sendError(reply, 404, "NOT_FOUND", "todo not found")
     return reply.code(204).send()
   })
 
   // ---- Notes ----
   app.get<{ Querystring: { q?: string; tag?: string } }>("/notes", async (req, reply) => {
     const auth = requireAuth(req)
-    if (!auth) return reply.code(401).send({ error: { code: "UNAUTHORIZED", message: "not logged in" } })
-    const db = (app as unknown as WbApp).db
-    const q = req.query.q?.trim()
-    const tag = req.query.tag?.trim()
+    if (!auth) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
+    const q = asTrimmedString(req.query.q, 200)
+    const tag = asTrimmedString(req.query.tag, 64)
     let sql = "SELECT id, title, body, tags, created_at, updated_at FROM notes WHERE user_id = ?"
-    const params: Param[] = [auth.userId]
+    const params: (string | number)[] = [auth.userId]
     if (q) {
       sql += " AND (title LIKE ? OR body LIKE ?)"
       params.push(`%${q}%`, `%${q}%`)
     }
     sql += " ORDER BY updated_at DESC LIMIT 200"
-    const rows = db.prepare(sql).all(...params) as {
+    const rows = app.db.prepare(sql).all(...params) as {
       id: string
       title: string
       body: string
@@ -192,64 +182,51 @@ export const workbenchRoutes: FastifyPluginAsync = async (app) => {
 
   app.post<{ Body: { title?: string; body?: string; tags?: string[] } }>("/notes", async (req, reply) => {
     const auth = requireAuth(req)
-    if (!auth) return reply.code(401).send({ error: { code: "UNAUTHORIZED", message: "not logged in" } })
-    const title = req.body?.title?.trim()
-    const body = req.body?.body ?? ""
-    if (!title) return reply.code(400).send({ error: { code: "BAD_REQUEST", message: "title required" } })
-    const db = (app as unknown as WbApp).db
+    if (!auth) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
+    const title = asTrimmedString(req.body?.title, MAX_TITLE)
+    if (!title) return sendError(reply, 400, "BAD_REQUEST", "title required")
+    const body = asOptionalString(req.body?.body, MAX_BODY) ?? ""
+    const tags = asStringArray(req.body?.tags) ?? []
     const id = randomUUID()
-    const ts = now()
-    const tags = JSON.stringify(req.body?.tags ?? [])
-    db.prepare("INSERT INTO notes (id, user_id, title, body, tags, created_at, updated_at) VALUES (?,?,?,?,?,?,?)").run(
-      id,
-      auth.userId,
-      title,
-      body,
-      tags,
-      ts,
-      ts,
-    )
-    return reply.code(201).send({
-      id,
-      title,
-      body,
-      tags: req.body?.tags ?? [],
-      createdAt: ts,
-      updatedAt: ts,
-    })
+    const ts = Date.now()
+    app.db
+      .prepare("INSERT INTO notes (id, user_id, title, body, tags, created_at, updated_at) VALUES (?,?,?,?,?,?,?)")
+      .run(id, auth.userId, title, body, JSON.stringify(tags), ts, ts)
+    return reply.code(201).send({ id, title, body, tags, createdAt: ts, updatedAt: ts })
   })
 
   app.patch<{ Params: { id: string }; Body: { title?: string; body?: string; tags?: string[] } }>(
     "/notes/:id",
     async (req, reply) => {
       const auth = requireAuth(req)
-      if (!auth) return reply.code(401).send({ error: { code: "UNAUTHORIZED", message: "not logged in" } })
-      const db = (app as unknown as WbApp).db
-      const existing = db.prepare("SELECT id FROM notes WHERE id = ? AND user_id = ?").get(req.params.id, auth.userId) as
+      if (!auth) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
+      const existing = app.db.prepare("SELECT id FROM notes WHERE id = ? AND user_id = ?").get(req.params.id, auth.userId) as
         | { id: string }
         | undefined
-      if (!existing) return reply.code(404).send({ error: { code: "NOT_FOUND", message: "note not found" } })
+      if (!existing) return sendError(reply, 404, "NOT_FOUND", "note not found")
 
       const fields: string[] = []
-      const params: Param[] = []
+      const params: (string | number | null)[] = []
       if (req.body?.title !== undefined) {
+        const title = asTrimmedString(req.body.title, MAX_TITLE)
+        if (!title) return sendError(reply, 400, "BAD_REQUEST", "title cannot be empty")
         fields.push("title = ?")
-        params.push(req.body.title)
+        params.push(title)
       }
       if (req.body?.body !== undefined) {
         fields.push("body = ?")
-        params.push(req.body.body)
+        params.push(asOptionalString(req.body.body, MAX_BODY) ?? "")
       }
       if (req.body?.tags !== undefined) {
         fields.push("tags = ?")
-        params.push(JSON.stringify(req.body.tags))
+        params.push(JSON.stringify(asStringArray(req.body.tags) ?? []))
       }
       fields.push("updated_at = ?")
-      params.push(now())
+      params.push(Date.now())
       params.push(req.params.id, auth.userId)
-      db.prepare(`UPDATE notes SET ${fields.join(", ")} WHERE id = ? AND user_id = ?`).run(...params)
+      app.db.prepare(`UPDATE notes SET ${fields.join(", ")} WHERE id = ? AND user_id = ?`).run(...params)
 
-      const row = db
+      const row = app.db
         .prepare("SELECT id, title, body, tags, created_at, updated_at FROM notes WHERE id = ?")
         .get(req.params.id) as {
         id: string
@@ -272,10 +249,9 @@ export const workbenchRoutes: FastifyPluginAsync = async (app) => {
 
   app.delete<{ Params: { id: string } }>("/notes/:id", async (req, reply) => {
     const auth = requireAuth(req)
-    if (!auth) return reply.code(401).send({ error: { code: "UNAUTHORIZED", message: "not logged in" } })
-    const db = (app as unknown as WbApp).db
-    const res = db.prepare("DELETE FROM notes WHERE id = ? AND user_id = ?").run(req.params.id, auth.userId)
-    if (Number(res.changes) === 0) return reply.code(404).send({ error: { code: "NOT_FOUND", message: "note not found" } })
+    if (!auth) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
+    const res = app.db.prepare("DELETE FROM notes WHERE id = ? AND user_id = ?").run(req.params.id, auth.userId)
+    if (Number(res.changes) === 0) return sendError(reply, 404, "NOT_FOUND", "note not found")
     return reply.code(204).send()
   })
 }

@@ -1,0 +1,360 @@
+import test from "node:test"
+import assert from "node:assert/strict"
+import { writeFile, readdir } from "node:fs/promises"
+import { join } from "node:path"
+import { ensureAdminUser } from "../dist/modules/auth/routes.js"
+import { base64Of, cleanup, login, startApp, stubAdapter, tempDir } from "./helpers.mjs"
+
+const PASSWORD = "test-password-123"
+
+const ALLOWLIST = {
+  units: [
+    { name: "nginx.service", label: "Nginx", allow: ["start", "stop", "restart", "status"], confirm: ["stop", "restart"] },
+    { name: "cloudflared.service", label: "Tunnel", allow: ["status", "restart"], confirm: ["restart"] },
+  ],
+}
+
+async function withApp(t, options = {}) {
+  const dir = await tempDir()
+  await writeFile(join(dir, "services.allowlist.json"), JSON.stringify(ALLOWLIST), "utf8")
+  const built = await startApp(dir, options)
+  await ensureAdminUser(built.db, "admin", PASSWORD)
+  t.after(async () => {
+    await built.app.close()
+    await cleanup(dir)
+  })
+  const { res, cookie } = await login(built.app, "admin", PASSWORD)
+  assert.equal(res.statusCode, 200, `login should succeed: ${res.body}`)
+  return { ...built, dir, cookie }
+}
+
+const auth = (cookie) => ({ cookie })
+
+// ---------------------------------------------------------------- auth
+
+test("protected routes reject anonymous callers with the unified envelope", async (t) => {
+  const { app } = await withApp(t)
+  for (const url of ["/api/v1/auth/me", "/api/v1/todos", "/api/v1/console/system", "/api/v1/agent/sessions"]) {
+    const res = await app.inject({ method: "GET", url })
+    assert.equal(res.statusCode, 401, url)
+    assert.equal(res.json().error.code, "UNAUTHORIZED", url)
+  }
+})
+
+test("login is rate limited after repeated failures", async (t) => {
+  const { app } = await withApp(t)
+  const statuses = []
+  for (let i = 0; i < 7; i++) {
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/login",
+      payload: { username: "admin", password: `wrong-${i}` },
+    })
+    statuses.push(res.statusCode)
+    if (res.statusCode === 429) {
+      assert.ok(res.headers["retry-after"], "429 must carry Retry-After")
+      assert.equal(res.json().error.code, "RATE_LIMITED")
+    }
+  }
+  assert.ok(statuses.includes(429), `expected a 429 in ${statuses.join(",")}`)
+  assert.ok(statuses.indexOf(429) >= 5, "must allow several attempts before blocking")
+})
+
+test("logout revokes the session cookie", async (t) => {
+  const { app, cookie } = await withApp(t)
+  assert.equal((await app.inject({ method: "GET", url: "/api/v1/auth/me", headers: auth(cookie) })).statusCode, 200)
+  await app.inject({ method: "POST", url: "/api/v1/auth/logout", headers: auth(cookie), payload: {} })
+  assert.equal((await app.inject({ method: "GET", url: "/api/v1/auth/me", headers: auth(cookie) })).statusCode, 401)
+})
+
+// ---------------------------------------------------------------- error contract
+
+test("malformed json is a 400 with the api error shape, not a 500", async (t) => {
+  const { app, cookie } = await withApp(t)
+  const res = await app.inject({
+    method: "POST",
+    url: "/api/v1/todos",
+    headers: { ...auth(cookie), "content-type": "application/json" },
+    payload: "{not json",
+  })
+  assert.equal(res.statusCode, 400)
+  assert.equal(res.json().error.code, "BAD_REQUEST")
+})
+
+test("oversized json bodies are reported as a normalised 413", async (t) => {
+  const { app, cookie } = await withApp(t)
+  const res = await app.inject({
+    method: "POST",
+    url: "/api/v1/todos",
+    headers: auth(cookie),
+    payload: { title: "x".repeat(1_200_000) },
+  })
+  assert.equal(res.statusCode, 413)
+  assert.equal(res.json().error.code, "PAYLOAD_TOO_LARGE")
+})
+
+test("security headers are present on html and api responses", async (t) => {
+  const { app, cookie } = await withApp(t)
+  const res = await app.inject({ method: "GET", url: "/api/v1/todos", headers: auth(cookie) })
+  assert.equal(res.headers["x-content-type-options"], "nosniff")
+  assert.equal(res.headers["x-frame-options"], "DENY")
+  assert.match(res.headers["content-security-policy"], /default-src 'self'/)
+})
+
+// ---------------------------------------------------------------- cloud files
+
+test("cloud upload accepts multi-megabyte base64 payloads", async (t) => {
+  const { app, cookie } = await withApp(t)
+  const twoMb = await app.inject({
+    method: "POST",
+    url: "/api/v1/files",
+    headers: auth(cookie),
+    payload: { name: "big.bin", contentBase64: base64Of(2 * 1024 * 1024) },
+  })
+  assert.equal(twoMb.statusCode, 201, twoMb.body)
+
+  const tooBig = await app.inject({
+    method: "POST",
+    url: "/api/v1/files",
+    headers: auth(cookie),
+    payload: { name: "huge.bin", contentBase64: base64Of(21 * 1024 * 1024) },
+  })
+  assert.equal(tooBig.statusCode, 400)
+  assert.match(tooBig.json().error.message, /20MB/)
+})
+
+test("overwriting a file preserves the previous content as a downloadable version", async (t) => {
+  const { app, cookie, dir } = await withApp(t)
+  const first = await app.inject({
+    method: "POST",
+    url: "/api/v1/files",
+    headers: auth(cookie),
+    payload: { name: "notes.txt", contentBase64: Buffer.from("VERSION-ONE").toString("base64") },
+  })
+  assert.equal(first.statusCode, 201)
+  const id = first.json().id
+
+  const second = await app.inject({
+    method: "POST",
+    url: "/api/v1/files",
+    headers: auth(cookie),
+    payload: { name: "notes.txt", contentBase64: Buffer.from("VERSION-TWO").toString("base64") },
+  })
+  assert.equal(second.statusCode, 201)
+  assert.equal(second.json().versioned, true)
+  assert.equal(second.json().id, id, "overwrite keeps the same file id")
+
+  const current = await app.inject({ method: "GET", url: `/api/v1/files/${id}`, headers: auth(cookie) })
+  assert.equal(current.body, "VERSION-TWO")
+
+  const versions = await app.inject({ method: "GET", url: `/api/v1/files/${id}/versions`, headers: auth(cookie) })
+  const items = versions.json().items
+  assert.equal(items.length, 1)
+
+  const previous = await app.inject({
+    method: "GET",
+    url: `/api/v1/files/${id}/versions/${items[0].id}`,
+    headers: auth(cookie),
+  })
+  assert.equal(previous.statusCode, 200)
+  assert.equal(previous.body, "VERSION-ONE", "the version must hold the OLD content")
+
+  await app.inject({ method: "DELETE", url: `/api/v1/files/${id}`, headers: auth(cookie) })
+  const listing = await readdir(join(dir, "cloud"), { recursive: true })
+  const leftovers = listing.filter((f) => f.includes("notes"))
+  assert.deepEqual(leftovers, [], `version files must be removed with the file: ${leftovers.join(",")}`)
+  const afterDelete = await app.inject({ method: "GET", url: `/api/v1/files/${id}/versions`, headers: auth(cookie) })
+  assert.equal(afterDelete.json().items.length, 0)
+})
+
+test("bookmarks only accept http and https urls", async (t) => {
+  const { app, cookie } = await withApp(t)
+  const bad = await app.inject({
+    method: "POST",
+    url: "/api/v1/bookmarks",
+    headers: auth(cookie),
+    payload: { url: "javascript:alert(1)" },
+  })
+  assert.equal(bad.statusCode, 400)
+
+  const good = await app.inject({
+    method: "POST",
+    url: "/api/v1/bookmarks",
+    headers: auth(cookie),
+    payload: { url: "https://example.com", title: "ok" },
+  })
+  assert.equal(good.statusCode, 201)
+})
+
+// ---------------------------------------------------------------- workbench validation
+
+test("todos validate status and dueAt", async (t) => {
+  const { app, cookie } = await withApp(t)
+  const bad = await app.inject({
+    method: "POST",
+    url: "/api/v1/todos",
+    headers: auth(cookie),
+    payload: { title: "t", status: "whatever" },
+  })
+  assert.equal(bad.statusCode, 400)
+
+  const created = await app.inject({
+    method: "POST",
+    url: "/api/v1/todos",
+    headers: auth(cookie),
+    payload: { title: "t", status: "open", dueAt: 1234 },
+  })
+  assert.equal(created.statusCode, 201)
+  const id = created.json().id
+
+  const patched = await app.inject({
+    method: "PATCH",
+    url: `/api/v1/todos/${id}`,
+    headers: auth(cookie),
+    payload: { status: "done", dueAt: null },
+  })
+  assert.equal(patched.statusCode, 200)
+  assert.equal(patched.json().status, "done")
+  assert.equal(patched.json().dueAt, null)
+})
+
+// ---------------------------------------------------------------- service control
+
+test("service control refuses units outside the allowlist and audits the attempt", async (t) => {
+  const { app, cookie, db } = await withApp(t)
+  const res = await app.inject({
+    method: "POST",
+    url: "/api/v1/console/services/ssh.service/restart",
+    headers: auth(cookie),
+    payload: {},
+  })
+  assert.equal(res.statusCode, 403)
+  assert.ok(res.json().auditId)
+  const row = db.prepare("SELECT * FROM service_audit WHERE id = ?").get(res.json().auditId)
+  assert.equal(row.allowed, 0)
+  assert.match(String(row.result), /not in allowlist/)
+
+  const list = await app.inject({ method: "GET", url: "/api/v1/console/services", headers: auth(cookie) })
+  const items = list.json().items
+  assert.equal(items.length, 2)
+  assert.ok("active" in items[0], "the panel needs the live state")
+  assert.deepEqual(items[0].confirmActions, ["stop", "restart"])
+})
+
+test("dangerous service actions need a confirm token bound to the caller", async (t) => {
+  const { app, cookie } = await withApp(t)
+  const first = await app.inject({
+    method: "POST",
+    url: "/api/v1/console/services/nginx.service/restart",
+    headers: auth(cookie),
+    payload: {},
+  })
+  assert.equal(first.statusCode, 202)
+  const token = first.json().confirmToken
+  assert.ok(token)
+
+  const wrongToken = await app.inject({
+    method: "POST",
+    url: "/api/v1/console/services/nginx.service/restart",
+    headers: auth(cookie),
+    payload: { confirmToken: "9999999999999.abcdefghijklmnopqrstuv" },
+  })
+  assert.equal(wrongToken.statusCode, 202, "a forged token must not be accepted")
+
+  const accepted = await app.inject({
+    method: "POST",
+    url: "/api/v1/console/services/nginx.service/restart",
+    headers: auth(cookie),
+    payload: { confirmToken: token },
+  })
+  assert.equal(accepted.statusCode, 200, accepted.body)
+  assert.notEqual(accepted.json().requiresConfirm, true)
+})
+
+// ---------------------------------------------------------------- metrics writes
+
+test("reading console metrics does not write metric rows", async (t) => {
+  const { app, cookie, db } = await withApp(t)
+  const count = () => db.prepare("SELECT COUNT(*) AS n FROM metrics_points").get().n
+  const before = count()
+  for (let i = 0; i < 5; i++) {
+    const res = await app.inject({ method: "GET", url: "/api/v1/console/system", headers: auth(cookie) })
+    assert.equal(res.statusCode, 200)
+  }
+  assert.equal(count(), before, "polling /console/system must not grow metrics_points")
+})
+
+// ---------------------------------------------------------------- agent proxy
+
+test("agent routes proxy through the adapter and validate decisions", async (t) => {
+  const adapter = stubAdapter()
+  const { app, cookie } = await withApp(t, { openCode: adapter })
+
+  const sessions = await app.inject({ method: "GET", url: "/api/v1/agent/sessions", headers: auth(cookie) })
+  assert.equal(sessions.statusCode, 200)
+  assert.equal(sessions.json().items.length, 1)
+
+  const permissions = await app.inject({
+    method: "GET",
+    url: "/api/v1/agent/sessions/ses_1/permissions",
+    headers: auth(cookie),
+  })
+  assert.equal(permissions.json().items[0].id, "perm_1")
+
+  const badDecision = await app.inject({
+    method: "POST",
+    url: "/api/v1/agent/sessions/ses_1/permissions/perm_1/reply",
+    headers: auth(cookie),
+    payload: { decision: "maybe" },
+  })
+  assert.equal(badDecision.statusCode, 400)
+
+  const reply = await app.inject({
+    method: "POST",
+    url: "/api/v1/agent/sessions/ses_1/permissions/perm_1/reply",
+    headers: auth(cookie),
+    payload: { decision: "allow" },
+  })
+  assert.equal(reply.statusCode, 200)
+  assert.deepEqual(adapter.calls.at(-1), { kind: "reply", id: "ses_1", reqId: "perm_1", decision: "allow" })
+
+  const prompt = await app.inject({
+    method: "POST",
+    url: "/api/v1/agent/sessions/ses_1/prompt",
+    headers: auth(cookie),
+    payload: { content: "  " },
+  })
+  assert.equal(prompt.statusCode, 400)
+})
+
+test("agent events stream stays open, ends with a heartbeat comment and delivers unnamed data frames", async (t) => {
+  const { app, cookie } = await withApp(t, { openCode: stubAdapter() })
+  await app.listen({ host: "127.0.0.1", port: 0 })
+  const address = app.server.address()
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 4000)
+  try {
+    const res = await fetch(`http://127.0.0.1:${address.port}/api/v1/agent/events`, {
+      headers: { cookie },
+      signal: controller.signal,
+    })
+    assert.equal(res.status, 200)
+    assert.match(res.headers.get("content-type") ?? "", /text\/event-stream/)
+    const reader = res.body.getReader()
+    const chunk = await reader.read()
+    const text = new TextDecoder().decode(chunk.value)
+    assert.match(text, /^retry: \d+/)
+    assert.match(text, /data: \{"type":"session\.update"/, "events must be sent as unnamed data frames")
+    assert.equal(chunk.done, false, "the connection must stay open")
+    await reader.cancel()
+  } finally {
+    clearTimeout(timer)
+  }
+})
+
+test("static SPA fallback is not served for unknown api routes", async (t) => {
+  const { app } = await withApp(t)
+  const res = await app.inject({ method: "GET", url: "/api/v1/nope" })
+  assert.equal(res.statusCode, 404)
+  assert.equal(res.json().error.code, "NOT_FOUND")
+})

@@ -6,9 +6,9 @@ import type {
   PermissionRequest,
 } from "@piforge/shared"
 import type {
+  DiffRange,
   EventHandlers,
   OpenCodeAdapter,
-  PermissionDecision as _PD,
   ProjectInfo,
   PromptReq,
   ServerInfo,
@@ -141,47 +141,87 @@ export function createHttpAdapter(opts: HttpAdapterOptions): OpenCodeAdapter {
       return (raw.data ?? []).map((a) => ({ id: a.id, name: a.name, description: a.description }))
     },
 
+    async getDiff(id: string, range?: DiffRange) {
+      const query = new URLSearchParams()
+      if (range?.from) query.set("from", range.from)
+      if (range?.to) query.set("to", range.to)
+      const suffix = query.size > 0 ? `?${query.toString()}` : ""
+      return req<unknown>(`/api/session/${encodeURIComponent(id)}/diff${suffix}`)
+    },
+
     subscribe(handlers: EventHandlers) {
-      const ac = new AbortController()
-      let stopped = false
-
-      void (async () => {
-        while (!stopped) {
-          try {
-            const res = await fetchFn(base + "/api/event", {
-              headers: { authorization: auth, accept: "text/event-stream" },
-              signal: ac.signal,
-            })
-            if (!res.ok || !res.body) {
-              throw new Error(`SSE failed: ${res.status}`)
-            }
-            const reader = res.body.getReader()
-            const decoder = new TextDecoder()
-            let buf = ""
-            while (!stopped) {
-              const { done, value } = await reader.read()
-              if (done) break
-              buf += decoder.decode(value, { stream: true })
-              const frames = buf.split("\n\n")
-              buf = frames.pop() ?? ""
-              for (const frame of frames) {
-                const evt = parseSseFrame(frame)
-                if (evt && handlers.onEvent) handlers.onEvent(evt)
-              }
-            }
-          } catch (e) {
-            if (stopped || ac.signal.aborted) return
-            handlers.onError?.(e instanceof Error ? e : new Error(String(e)))
-          }
-          if (!stopped) await new Promise((r) => setTimeout(r, 2000))
-        }
-      })()
-
+      subscribers.add(handlers)
+      ensureUpstream()
       return () => {
-        stopped = true
-        ac.abort()
+        subscribers.delete(handlers)
+        if (subscribers.size === 0) stopUpstream()
       }
     },
+  }
+
+  // One upstream SSE connection shared by all browser clients: the Pi should not open
+  // a separate OpenCode event stream per panel/tab.
+  const subscribers = new Set<EventHandlers>()
+  let controller: AbortController | null = null
+
+  function broadcast(event: AgentStreamEvent): void {
+    for (const subscriber of subscribers) {
+      try {
+        subscriber.onEvent?.(event)
+      } catch {
+        /* a broken client must not kill the stream */
+      }
+    }
+  }
+
+  function broadcastError(err: Error): void {
+    for (const subscriber of subscribers) {
+      try {
+        subscriber.onError?.(err)
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  function ensureUpstream(): void {
+    if (controller) return
+    const ac = new AbortController()
+    controller = ac
+    void (async () => {
+      while (!ac.signal.aborted) {
+        try {
+          const res = await fetchFn(base + "/api/event", {
+            headers: { authorization: auth, accept: "text/event-stream" },
+            signal: ac.signal,
+          })
+          if (!res.ok || !res.body) throw new Error(`SSE failed: ${res.status}`)
+          const reader = res.body.getReader()
+          const decoder = new TextDecoder()
+          let buf = ""
+          while (!ac.signal.aborted) {
+            const { done, value } = await reader.read()
+            if (done) break
+            buf += decoder.decode(value, { stream: true })
+            const frames = buf.split("\n\n")
+            buf = frames.pop() ?? ""
+            for (const frame of frames) {
+              const evt = parseSseFrame(frame)
+              if (evt) broadcast(evt)
+            }
+          }
+        } catch (e) {
+          if (ac.signal.aborted) return
+          broadcastError(e instanceof Error ? e : new Error(String(e)))
+        }
+        if (!ac.signal.aborted) await new Promise((r) => setTimeout(r, 2000))
+      }
+    })()
+  }
+
+  function stopUpstream(): void {
+    controller?.abort()
+    controller = null
   }
 }
 
@@ -284,7 +324,8 @@ function mapPermission(raw: RawPermission, sessionId: string): PermissionRequest
   }
 }
 
-function parseSseFrame(frame: string): AgentStreamEvent | null {
+/** Exported for contract tests. */
+export function parseSseFrame(frame: string): AgentStreamEvent | null {
   let eventType = ""
   let dataLine = ""
   for (const line of frame.split("\n")) {

@@ -2,13 +2,21 @@ import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import { readFileSync } from "node:fs"
 import type { MetricKind, MetricPoint, SdHealth, SystemSnapshot } from "@piforge/shared"
-import type { Db } from "../../db/index.js"
+import { getSettingNumber, setSetting, type Db } from "../../db/index.js"
 
 const execFileAsync = promisify(execFile)
 
-let lastDisk: { sectors: number; at: number } | null = null
+const SD_DEVICE = process.env.SD_DEVICE ?? "mmcblk0"
+/** Consumer 64GB-class cards are typically rated ~100 TBW; override per card when known. */
+const RATED_TBW_BYTES = Number(process.env.SD_RATED_TBW_BYTES ?? 100 * 1024 ** 4)
+const WRITE_SETTING_PERSIST_MS = 5 * 60 * 1000
+/** Persist early when a lot has been written, so a reboot cannot lose much. */
+const WRITE_SETTING_PERSIST_DELTA = 64 * 1024 * 1024
 
-export async function readSnapshot(): Promise<SystemSnapshot> {
+let lastDisk: { sectors: number; at: number } | null = null
+let lastPersistAt = 0
+
+export async function readSnapshot(db: Db): Promise<SystemSnapshot> {
   const [tempC, load1, mem, disk, throttled, uptimeSec] = await Promise.all([
     readTemp(),
     readLoad(),
@@ -17,54 +25,93 @@ export async function readSnapshot(): Promise<SystemSnapshot> {
     readThrottled(),
     readUptime(),
   ])
+  const writes = accountWrites(db, disk.bootBytes)
   return {
     tempC,
     load1,
     memTotalKb: mem.totalKb,
     memAvailableKb: mem.availableKb,
     diskWriteBps: disk.bps,
-    sdTotalWriteBytes: disk.totalBytes,
+    sdTotalWriteBytes: writes.lifetime,
+    sdBootWriteBytes: writes.boot,
     throttled,
     uptimeSec,
     capturedAt: Date.now(),
   }
 }
 
-export async function readSdHealth(): Promise<SdHealth> {
+export async function readSdHealth(db: Db): Promise<SdHealth> {
   let model = "unknown"
   try {
-    model = readFileSync("/sys/block/mmcblk0/device/name", "utf8").trim()
+    model = readFileSync(`/sys/block/${SD_DEVICE}/device/name`, "utf8").trim()
   } catch {
     /* non-linux or missing */
   }
   const disk = await readDiskWrite()
-  // Rough estimate: assume current daily rate continues; SD consumer cards often rated ~100 TBW for 64GB class
-  const dayWriteBytes = estimateDayWrite(disk.totalBytes)
-  const ratedTbW = 100 * 1024 ** 4
-  const estimateDaysLeft = dayWriteBytes > 0 ? (ratedTbW - disk.totalBytes) / dayWriteBytes : null
+  const writes = accountWrites(db, disk.bootBytes)
+  const dayWriteBytes = estimateDayWrite(db, writes.lifetime)
+  const remaining = RATED_TBW_BYTES - writes.lifetime
   return {
     model,
-    totalWriteBytes: disk.totalBytes,
+    totalWriteBytes: writes.lifetime,
+    bootWriteBytes: writes.boot,
     dayWriteBytes,
-    estimateDaysLeft: estimateDaysLeft && estimateDaysLeft > 0 ? Math.round(estimateDaysLeft) : null,
+    estimateDaysLeft: dayWriteBytes > 0 && remaining > 0 ? Math.round(remaining / dayWriteBytes) : null,
+    ratedTbwBytes: RATED_TBW_BYTES,
   }
 }
 
-const dayWriteSamples: { at: number; total: number }[] = []
+/**
+ * /proc/diskstats counters reset on every boot, so a raw read is NOT a lifetime figure.
+ * We persist the boot counter and fold it into an accumulator when a reboot is detected.
+ */
+/** Exported for tests: folds a boot-relative counter into a lifetime figure. */
+export function accountWrites(db: Db, bootBytes: number, now = Date.now()): { lifetime: number; boot: number } {
+  const accum = getSettingNumber(db, "sd_write_accum") ?? 0
+  const last = getSettingNumber(db, "sd_write_boot")
 
-function estimateDayWrite(totalBytes: number): number {
-  const now = Date.now()
-  dayWriteSamples.push({ at: now, total: totalBytes })
-  // keep 24h of samples
-  while (dayWriteSamples.length > 2 && now - dayWriteSamples[0].at > 86400_000) {
-    dayWriteSamples.shift()
+  if (last === null || bootBytes < last) {
+    const folded = last ?? 0
+    const nextAccum = accum + folded
+    setSetting(db, "sd_write_accum", String(nextAccum))
+    setSetting(db, "sd_write_boot", String(bootBytes))
+    lastPersistAt = now
+    return { lifetime: nextAccum + bootBytes, boot: bootBytes }
   }
-  if (dayWriteSamples.length < 2) return 0
-  const first = dayWriteSamples[0]
-  const last = dayWriteSamples[dayWriteSamples.length - 1]
-  const dtMs = last.at - first.at
-  if (dtMs <= 0) return 0
-  return ((last.total - first.total) / dtMs) * 86400_000
+
+  if (now - lastPersistAt > WRITE_SETTING_PERSIST_MS || bootBytes - last > WRITE_SETTING_PERSIST_DELTA) {
+    setSetting(db, "sd_write_boot", String(bootBytes))
+    lastPersistAt = now
+  }
+  return { lifetime: accum + bootBytes, boot: bootBytes }
+}
+
+/** Smoothed daily write rate from a persisted baseline (survives restarts). */
+function estimateDayWrite(db: Db, lifetimeBytes: number, now = Date.now()): number {
+  const baseTs = getSettingNumber(db, "sd_rate_ts")
+  const baseTotal = getSettingNumber(db, "sd_rate_total")
+  const MIN_WINDOW_MS = 10 * 60 * 1000
+  const ROTATE_WINDOW_MS = 24 * 3600 * 1000
+
+  if (baseTs === null || baseTotal === null || lifetimeBytes < baseTotal) {
+    setSetting(db, "sd_rate_ts", String(now))
+    setSetting(db, "sd_rate_total", String(lifetimeBytes))
+    return 0
+  }
+
+  const elapsed = now - baseTs
+  if (elapsed < MIN_WINDOW_MS) {
+    const maybe = getSettingNumber(db, "sd_rate_day")
+    return maybe ?? 0
+  }
+
+  const perDay = ((lifetimeBytes - baseTotal) / elapsed) * 86_400_000
+  setSetting(db, "sd_rate_day", String(perDay))
+  if (elapsed >= ROTATE_WINDOW_MS) {
+    setSetting(db, "sd_rate_ts", String(now))
+    setSetting(db, "sd_rate_total", String(lifetimeBytes))
+  }
+  return perDay
 }
 
 export function recordMetrics(db: Db, snap: SystemSnapshot): void {
@@ -82,16 +129,24 @@ export function recordMetrics(db: Db, snap: SystemSnapshot): void {
   for (const r of rows) stmt.run(r.ts, r.kind, r.value)
 }
 
-export function queryMetrics(db: Db, kind: MetricKind, from: number, to: number): MetricPoint[] {
+/** One durable row per hour keeps SD health history without the write cost of per-sample rows. */
+export function recordSdHealth(db: Db, sd: SdHealth, now = Date.now()): void {
+  const bucket = Math.floor(now / 3600_000) * 3600_000
+  db.prepare(
+    "INSERT OR REPLACE INTO sd_health (ts, total_write_bytes, day_write_bytes, estimate_days_left) VALUES (?, ?, ?, ?)",
+  ).run(bucket, Math.round(sd.totalWriteBytes), Math.round(sd.dayWriteBytes), sd.estimateDaysLeft)
+}
+
+export function queryMetrics(db: Db, kind: MetricKind, from: number, to: number, limit = 20_000): MetricPoint[] {
   const rows = db
-    .prepare("SELECT ts, kind, value FROM metrics_points WHERE kind = ? AND ts >= ? AND ts <= ? ORDER BY ts")
-    .all(kind, from, to) as { ts: number; kind: string; value: number }[]
+    .prepare("SELECT ts, kind, value FROM metrics_points WHERE kind = ? AND ts >= ? AND ts <= ? ORDER BY ts LIMIT ?")
+    .all(kind, from, to, limit) as { ts: number; kind: string; value: number }[]
   return rows.map((r) => ({ ts: r.ts, kind: r.kind as MetricKind, value: r.value }))
 }
 
 async function readTemp(): Promise<number> {
   try {
-    const { stdout } = await execFileAsync("vcgencmd", ["measure_temp"])
+    const { stdout } = await execFileAsync("vcgencmd", ["measure_temp"], { timeout: 4000 })
     const m = stdout.match(/([0-9.]+)/)
     return m ? Number(m[1]) : 0
   } catch {
@@ -124,19 +179,19 @@ async function readMem(): Promise<{ totalKb: number; availableKb: number }> {
   }
 }
 
-async function readDiskWrite(): Promise<{ bps: number; totalBytes: number }> {
+export async function readDiskWrite(): Promise<{ bps: number; bootBytes: number }> {
   try {
     const raw = readFileSync("/proc/diskstats", "utf8")
-    // field 10 (1-based) is sectors written for the device
+    // /proc/diskstats: field 10 (1-based) is sectors written for the device.
     let sectors = 0
     for (const line of raw.split("\n")) {
       const parts = line.trim().split(/\s+/)
-      if (parts[2] === "mmcblk0" && parts.length >= 10) {
+      if (parts[2] === SD_DEVICE && parts.length >= 10) {
         sectors = Number(parts[9])
         break
       }
     }
-    const totalBytes = sectors * 512
+    const bootBytes = sectors * 512
     const now = Date.now()
     let bps = 0
     if (lastDisk) {
@@ -144,15 +199,15 @@ async function readDiskWrite(): Promise<{ bps: number; totalBytes: number }> {
       if (dt > 0) bps = ((sectors - lastDisk.sectors) * 512) / dt
     }
     lastDisk = { sectors, at: now }
-    return { bps: Math.max(0, bps), totalBytes }
+    return { bps: Math.max(0, bps), bootBytes }
   } catch {
-    return { bps: 0, totalBytes: 0 }
+    return { bps: 0, bootBytes: 0 }
   }
 }
 
 async function readThrottled(): Promise<string> {
   try {
-    const { stdout } = await execFileAsync("vcgencmd", ["get_throttled"])
+    const { stdout } = await execFileAsync("vcgencmd", ["get_throttled"], { timeout: 4000 })
     return stdout.trim().split("=")[1] ?? "0x0"
   } catch {
     return "unknown"

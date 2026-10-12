@@ -15,7 +15,9 @@
     "build": "npm run build -w @piforge/shared && npm run build -w @piforge/gateway && npm run build -w @piforge/web",
     "typecheck": "npm run typecheck -w @piforge/shared && npm run typecheck -w @piforge/gateway && npm run typecheck -w @piforge/web",
     "dev:gateway": "npm run dev -w @piforge/gateway",
-    "dev:web": "npm run dev -w @piforge/web"
+    "dev:web": "npm run dev -w @piforge/web",
+    "test": "npm run build -w @piforge/shared && npm run build -w @piforge/gateway && node --test packages/gateway/test/",
+    "verify": "npm run typecheck && npm run test"
   },
   "devDependencies": {
     "typescript": "^5.8.2"

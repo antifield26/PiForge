@@ -1,32 +1,29 @@
-import type { FastifyPluginAsync, FastifyInstance } from "fastify"
+import type { FastifyPluginAsync } from "fastify"
 import { requireAuth } from "../auth/routes.js"
-import { queryMetrics, readSdHealth, readSnapshot, recordMetrics } from "./metrics.js"
-import type { MetricKind, ServiceAction, SystemSnapshot } from "@piforge/shared"
-import { loadAllowlist } from "./allowlist.js"
+import { queryMetrics, readSdHealth, readSnapshot, recordMetrics, recordSdHealth } from "./metrics.js"
+import type { MetricKind } from "@piforge/shared"
 import { controlService, listAudit, listServiceStatus } from "./service-control.js"
-import type { Db } from "../../db/index.js"
+import { clientIp } from "../../util/net.js"
+import { clampInt, sendError } from "../../util/validate.js"
+import { pruneMetrics, pruneSdHealth } from "../../db/index.js"
+import { runBackup } from "./backup.js"
 
 const FLUSH_MS = 5 * 60 * 1000
 const SAMPLE_MS = 5 * 1000
-
-interface ConsoleApp extends FastifyInstance {
-  db: Db
-}
+const METRIC_KINDS: MetricKind[] = ["cpu", "mem", "temp", "disk_write"]
 
 export const consoleRoutes: FastifyPluginAsync = async (app) => {
-  const pending: SystemSnapshot[] = []
+  const pending: Awaited<ReturnType<typeof readSnapshot>>[] = []
   let sampleTimer: ReturnType<typeof setInterval> | null = null
   let flushTimer: ReturnType<typeof setInterval> | null = null
 
   app.addHook("onReady", async () => {
     sampleTimer = setInterval(() => {
-      void readSnapshot()
+      void readSnapshot(app.db)
         .then((snap) => {
-          pending.push(snap)
+          if (pending.length < 720) pending.push(snap)
         })
-        .catch(() => {
-          /* ignore sample errors */
-        })
+        .catch((err) => app.log.debug({ err }, "metrics sample failed"))
     }, SAMPLE_MS)
     sampleTimer.unref()
 
@@ -34,10 +31,14 @@ export const consoleRoutes: FastifyPluginAsync = async (app) => {
       if (pending.length === 0) return
       const batch = pending.splice(0, pending.length)
       try {
-        const db = (app as ConsoleApp).db
-        for (const snap of batch) recordMetrics(db, snap)
-      } catch {
-        /* drop batch on error */
+        for (const snap of batch) recordMetrics(app.db, snap)
+        void readSdHealth(app.db)
+          .then((sd) => recordSdHealth(app.db, sd))
+          .catch(() => undefined)
+        pruneMetrics(app.db, app.config.metricsRetentionDays)
+        pruneSdHealth(app.db)
+      } catch (err) {
+        app.log.warn({ err }, "metrics flush failed")
       }
     }, FLUSH_MS)
     flushTimer.unref()
@@ -49,55 +50,52 @@ export const consoleRoutes: FastifyPluginAsync = async (app) => {
   })
 
   app.get("/system", async (req, reply) => {
-    if (!requireAuth(req)) return reply.code(401).send({ error: { code: "UNAUTHORIZED", message: "not logged in" } })
-    const snap = await readSnapshot()
-    // also persist immediately so charts have a sample without waiting for flush
-    try {
-      recordMetrics((app as ConsoleApp).db, snap)
-    } catch {
-      /* ignore */
-    }
-    return snap
+    if (!requireAuth(req)) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
+    // Read-only: the 5s sampler owns persistence, so a panel poll does not write to the SD card.
+    return readSnapshot(app.db)
   })
 
   app.get<{ Querystring: { kind?: string; from?: string; to?: string } }>("/metrics", async (req, reply) => {
-    if (!requireAuth(req)) return reply.code(401).send({ error: { code: "UNAUTHORIZED", message: "not logged in" } })
+    if (!requireAuth(req)) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
     const kind = (req.query.kind ?? "cpu") as MetricKind
-    const to = Number(req.query.to ?? Date.now())
-    const from = Number(req.query.from ?? to - 3600_000)
-    return { items: queryMetrics((app as ConsoleApp).db, kind, from, to) }
+    if (!METRIC_KINDS.includes(kind)) {
+      return sendError(reply, 400, "BAD_REQUEST", `kind must be one of ${METRIC_KINDS.join(", ")}`)
+    }
+    const to = clampInt(req.query.to, Date.now(), 0, Number.MAX_SAFE_INTEGER)
+    const from = clampInt(req.query.from, to - 3600_000, 0, Number.MAX_SAFE_INTEGER)
+    return { kind, from, to, items: queryMetrics(app.db, kind, from, to) }
   })
 
   app.get("/sd", async (req, reply) => {
-    if (!requireAuth(req)) return reply.code(401).send({ error: { code: "UNAUTHORIZED", message: "not logged in" } })
-    return readSdHealth()
+    if (!requireAuth(req)) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
+    return readSdHealth(app.db)
   })
 
   app.get("/services", async (req, reply) => {
-    if (!requireAuth(req)) return reply.code(401).send({ error: { code: "UNAUTHORIZED", message: "not logged in" } })
-    return { items: listServiceStatus() }
+    if (!requireAuth(req)) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
+    return { items: await listServiceStatus() }
   })
 
   app.post<{ Params: { unit: string; action: string }; Body: { confirmToken?: string } }>(
     "/services/:unit/:action",
     async (req, reply) => {
       const auth = requireAuth(req)
-      if (!auth) return reply.code(401).send({ error: { code: "UNAUTHORIZED", message: "not logged in" } })
-      const action = req.params.action as ServiceAction
+      if (!auth) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
+      const action = req.params.action
       if (!["start", "stop", "restart", "status"].includes(action)) {
-        return reply.code(400).send({ error: { code: "BAD_REQUEST", message: "invalid action" } })
+        return sendError(reply, 400, "BAD_REQUEST", "invalid action")
       }
-      const unit = decodeURIComponent(req.params.unit)
+      const unit = req.params.unit
       const result = await controlService(
-        (app as ConsoleApp).db,
+        app.db,
         unit,
-        action,
+        action as "start" | "stop" | "restart" | "status",
         auth.userId,
-        req.ip,
+        clientIp(req),
         req.body?.confirmToken,
       )
       if (!result.allowed) {
-        return reply.code(403).send({ error: { code: "FORBIDDEN", message: result.result }, auditId: result.auditId })
+        return sendError(reply, 403, "FORBIDDEN", result.result, { auditId: result.auditId })
       }
       if (result.requiresConfirm) {
         return reply.code(202).send({
@@ -112,15 +110,14 @@ export const consoleRoutes: FastifyPluginAsync = async (app) => {
     },
   )
 
-  app.get("/audit", async (req, reply) => {
-    if (!requireAuth(req)) return reply.code(401).send({ error: { code: "UNAUTHORIZED", message: "not logged in" } })
-    return { items: listAudit((app as ConsoleApp).db) }
+  app.get<{ Querystring: { limit?: string } }>("/audit", async (req, reply) => {
+    if (!requireAuth(req)) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
+    return { items: listAudit(app.db, clampInt(req.query.limit, 50, 1, 500)) }
   })
 
   app.get("/backups", async (req, reply) => {
-    if (!requireAuth(req)) return reply.code(401).send({ error: { code: "UNAUTHORIZED", message: "not logged in" } })
-    const db = (app as ConsoleApp).db
-    const items = db
+    if (!requireAuth(req)) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
+    const items = app.db
       .prepare(
         "SELECT id, started_at, finished_at, status, target, bytes, checksum, message FROM backup_runs ORDER BY id DESC LIMIT 20",
       )
@@ -130,34 +127,11 @@ export const consoleRoutes: FastifyPluginAsync = async (app) => {
 
   app.post("/backups/run", async (req, reply) => {
     const auth = requireAuth(req)
-    if (!auth) return reply.code(401).send({ error: { code: "UNAUTHORIZED", message: "not logged in" } })
-    const db = (app as ConsoleApp).db
-    const started = Date.now()
-    const res = db
-      .prepare("INSERT INTO backup_runs (started_at, status, target) VALUES (?,?,?)")
-      .run(started, "running", "local:/home/antifield/backups/piforge")
-    const id = Number(res.lastInsertRowid)
-    try {
-      const { execFile } = await import("node:child_process")
-      const { promisify } = await import("node:util")
-      const run = promisify(execFile)
-      await run("bash", ["/home/antifield/piforge/scripts/backup.sh"], { timeout: 120_000 })
-      db.prepare("UPDATE backup_runs SET finished_at=?, status=?, message=? WHERE id=?").run(
-        Date.now(),
-        "ok",
-        "backup completed",
-        id,
-      )
-      return reply.code(201).send({ id, status: "ok" })
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      db.prepare("UPDATE backup_runs SET finished_at=?, status=?, message=? WHERE id=?").run(
-        Date.now(),
-        "failed",
-        msg.slice(0, 300),
-        id,
-      )
-      return reply.code(502).send({ id, status: "failed", message: msg.slice(0, 300) })
+    if (!auth) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
+    const run = await runBackup(app.db, app.config.backupScript)
+    if (run.status === "failed") {
+      return reply.code(502).send({ error: { code: "BACKUP_FAILED", message: run.message }, ...run })
     }
+    return reply.code(201).send(run)
   })
 }

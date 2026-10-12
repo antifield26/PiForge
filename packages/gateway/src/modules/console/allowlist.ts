@@ -8,12 +8,27 @@ export interface AllowlistUnit {
   confirm?: string[]
 }
 
+export const DEFAULT_ALLOWLIST_PATH = "/etc/piforge/services.allowlist.json"
+
+let configuredPath: string | null = null
+
+/** Bootstrap hands the resolved path in so route code never re-reads the environment. */
+export function setAllowlistPath(path: string): void {
+  configuredPath = path
+}
+
+export function allowlistPath(): string {
+  return configuredPath ?? process.env.SERVICES_ALLOWLIST ?? DEFAULT_ALLOWLIST_PATH
+}
+
 export function loadAllowlist(): AllowlistUnit[] {
-  const path = process.env.SERVICES_ALLOWLIST ?? "./config/services.allowlist.json"
   try {
-    const parsed = JSON.parse(readFileSync(path, "utf8")) as { units?: AllowlistUnit[] }
-    return parsed.units ?? []
+    const parsed = JSON.parse(readFileSync(allowlistPath(), "utf8")) as { units?: AllowlistUnit[] }
+    return Array.isArray(parsed.units)
+      ? parsed.units.filter((u) => typeof u?.name === "string" && Array.isArray(u?.allow))
+      : []
   } catch {
+    // Failing closed (empty allowlist) is intentional: no config means no control.
     return []
   }
 }

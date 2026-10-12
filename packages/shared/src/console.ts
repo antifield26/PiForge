@@ -4,7 +4,10 @@ export interface SystemSnapshot {
   memTotalKb: number
   memAvailableKb: number
   diskWriteBps: number
+  /** lifetime SD writes, persisted across reboots (see docs/ARCHITECTURE.md §5) */
   sdTotalWriteBytes: number
+  /** writes since the current boot, from /proc/diskstats */
+  sdBootWriteBytes: number
   throttled: string
   uptimeSec: number
   capturedAt: number
@@ -21,8 +24,10 @@ export interface MetricPoint {
 export interface ServiceStatus {
   unit: string
   label: string
-  active: boolean
+  /** null when the state could not be determined */
+  active: boolean | null
   allowedActions: string[]
+  confirmActions: string[]
 }
 
 export type ServiceAction = "start" | "stop" | "restart" | "status"
@@ -38,7 +43,20 @@ export interface AuditEntry {
 
 export interface SdHealth {
   model: string
+  /** lifetime estimate, persisted across reboots */
   totalWriteBytes: number
+  /** writes since the current boot */
+  bootWriteBytes: number
   dayWriteBytes: number
   estimateDaysLeft: number | null
+  ratedTbwBytes: number
+}
+
+export interface MetricsSummary {
+  kind: MetricKind
+  count: number
+  min?: number
+  max?: number
+  avg?: number
+  last?: number
 }

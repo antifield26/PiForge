@@ -31,6 +31,11 @@ export interface PromptReq {
   agent?: string
 }
 
+export interface DiffRange {
+  from?: string
+  to?: string
+}
+
 export interface OpenCodeAdapter {
   info(): Promise<ServerInfo>
   listProjects(): Promise<ProjectInfo[]>
@@ -44,6 +49,7 @@ export interface OpenCodeAdapter {
   listPermissionRequests(id: string): Promise<PermissionRequest[]>
   replyPermission(id: string, reqId: string, decision: PermissionDecision): Promise<void>
   listAgents(): Promise<{ id: string; name: string; description?: string }[]>
+  getDiff(id: string, range?: DiffRange): Promise<unknown>
   subscribe(handlers: EventHandlers): () => void
 }
 
