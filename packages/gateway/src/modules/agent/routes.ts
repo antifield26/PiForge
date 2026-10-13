@@ -8,6 +8,9 @@ import { sendError } from "../../util/validate.js"
 const HEARTBEAT_MS = 15_000
 // Prompting launches model work and can spawn tools; keep a stolen session bounded.
 const heavy = createHeavyLimiter(15, 60_000)
+// Session create / interrupt / permission reply are cheaper than a prompt but still upstream
+// writes; a stolen cookie must not be able to mint sessions or interrupt unbounded.
+const writeHeavy = createHeavyLimiter(20, 60_000)
 /**
  * `/events` takes the socket over, so every connection pins a handler, a 15s timer and a file
  * descriptor. Without a ceiling an authenticated caller can walk the process into EMFILE, at
@@ -71,7 +74,13 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
   })
 
   app.post<{ Body: { title?: string } }>("/sessions", async (req, reply) => {
-    if (!requireAuth(req)) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
+    const auth = requireAuth(req)
+    if (!auth) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
+    const budget = checkHeavy(writeHeavy, auth.userId)
+    if (!budget.allowed) {
+      reply.header("retry-after", String(budget.retryAfterSec))
+      return sendError(reply, 429, "RATE_LIMITED", `too many session creates, retry in ${budget.retryAfterSec}s`)
+    }
     try {
       return reply.code(201).send(await app.openCode.createSession(req.body?.title))
     } catch (e) {
@@ -107,7 +116,13 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
   )
 
   app.post<{ Params: { id: string } }>("/sessions/:id/interrupt", async (req, reply) => {
-    if (!requireAuth(req)) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
+    const auth = requireAuth(req)
+    if (!auth) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
+    const budget = checkHeavy(writeHeavy, auth.userId)
+    if (!budget.allowed) {
+      reply.header("retry-after", String(budget.retryAfterSec))
+      return sendError(reply, 429, "RATE_LIMITED", `too many interrupts, retry in ${budget.retryAfterSec}s`)
+    }
     try {
       await app.openCode.interrupt(req.params.id)
       return { ok: true }
@@ -149,10 +164,16 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
   app.post<{ Params: { id: string; reqId: string }; Body: { decision?: string } }>(
     "/sessions/:id/permissions/:reqId/reply",
     async (req, reply) => {
-      if (!requireAuth(req)) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
+      const auth = requireAuth(req)
+      if (!auth) return sendError(reply, 401, "UNAUTHORIZED", "not logged in")
       const decision = req.body?.decision
       if (decision !== "allow" && decision !== "deny" && decision !== "always") {
         return sendError(reply, 400, "BAD_REQUEST", "decision must be allow|deny|always")
+      }
+      const budget = checkHeavy(writeHeavy, auth.userId)
+      if (!budget.allowed) {
+        reply.header("retry-after", String(budget.retryAfterSec))
+        return sendError(reply, 429, "RATE_LIMITED", `too many permission replies, retry in ${budget.retryAfterSec}s`)
       }
       try {
         await app.openCode.replyPermission(req.params.id, req.params.reqId, decision)

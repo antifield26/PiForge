@@ -78,6 +78,8 @@ npm run verify
 
 运行时安装在 **`/opt/piforge`**（root:root，服务用户只读）；`/home/antifield/piforge` 仅作为构建与同步源。
 
+> **运维双账号（ADR-9 / FIX-4.9）**：目标态为运维登录 **`piforge`**（受限 sudo，`/etc/sudoers.d/piforge` 的 `PIFORGE_OPS`），`antifield` 取消 `NOPASSWD: ALL`。创建/切换用 `sudo bash /opt/piforge/scripts/setup-ops-account.sh`（先跑通 `piforge` SSH，再 `--demote-antifield`，保留会话自救）。脚手架见 `deploy/sudoers.d-piforge`。
+
 ```powershell
 # 1) 同步检出到 Pi（保留 Pi 上的 node_modules 与 data/）
 rsync -az --delete --exclude node_modules --exclude .git --exclude opencode --exclude data `

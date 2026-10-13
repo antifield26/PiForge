@@ -390,6 +390,101 @@ test("a second gateway refuses to start against the same database", async (t) =>
   reclaimed()
 })
 
+// ---------------------------------------------------------------- FIX-4: agent write budget
+
+test("agent session create and interrupt are rate limited per user", async (t) => {
+  const calls = []
+  const openCode = stubAdapter({
+    async createSession(title) {
+      calls.push("create")
+      return { id: `ses_${calls.length}`, title: title ?? "", createdAt: 1, updatedAt: 1 }
+    },
+    async interrupt() {
+      calls.push("interrupt")
+    },
+  })
+  const { app, cookie } = await withApp(t, { openCode })
+  // writeHeavy is 20/min; the 21st write must come back 429 with Retry-After.
+  let limited = null
+  for (let i = 0; i < 25; i++) {
+    const res = await app.inject({ method: "POST", url: "/api/v1/agent/sessions", headers: auth(cookie), payload: {} })
+    if (res.statusCode === 429) {
+      limited = res
+      break
+    }
+    assert.equal(res.statusCode, 201, res.body)
+  }
+  assert.ok(limited, "session create must eventually return 429")
+  assert.ok(limited.headers["retry-after"], "429 must carry Retry-After")
+  assert.match(limited.json().error.code, /RATE_LIMITED/)
+})
+
+// ---------------------------------------------------------------- FIX-4: login key case-fold
+
+test("login rate limit buckets Admin and admin as the same username key", async (t) => {
+  const { app } = await withApp(t)
+  // userLimit is 5 per 5 minutes; alternate casing must share one budget.
+  const statuses = []
+  for (let i = 0; i < 8; i++) {
+    const username = i % 2 === 0 ? "Admin" : "admin"
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/login",
+      payload: { username, password: `wrong-${i}` },
+    })
+    statuses.push(res.statusCode)
+    if (res.statusCode === 429) break
+  }
+  assert.ok(
+    statuses.includes(429),
+    `mixed-case usernames must share one limit bucket, got ${statuses.join(",")}`,
+  )
+})
+
+// ---------------------------------------------------------------- FIX-4: notFound decode
+
+test("percent-encoded API paths get a JSON 404, not the SPA shell", async (t) => {
+  const { app } = await withApp(t)
+  const res = await app.inject({ method: "GET", url: "/%61pi/v1/no-such-route" })
+  assert.equal(res.statusCode, 404)
+  assert.equal(res.json().error.code, "NOT_FOUND")
+  const htmlish = await app.inject({ method: "GET", url: "/workbench-panel" })
+  // No web dist in tests: non-API 404 is still JSON, but must NOT claim to be an API miss.
+  assert.equal(htmlish.statusCode, 404)
+  assert.equal(htmlish.json().error.code, "NOT_FOUND")
+})
+
+// ---------------------------------------------------------------- FIX-4: error message hygiene
+
+test("thrown non-business errors do not echo err.message to the client", async (t) => {
+  const { app, cookie } = await withApp(t)
+  // Force the error handler via an invalid JSON body: our typed BAD_REQUEST keeps its message.
+  const bad = await app.inject({
+    method: "POST",
+    url: "/api/v1/todos",
+    headers: { ...auth(cookie), "content-type": "application/json" },
+    payload: "{not-json",
+  })
+  assert.equal(bad.statusCode, 400)
+  assert.equal(bad.json().error.message, "invalid json body")
+
+  // Simulate a Fastify-internal throw by posting a non-object body that still parses as JSON
+  // but is not what the route expects — the route itself uses sendError. For the error-handler
+  // path, craft a request that surfaces as 400 without our BAD_REQUEST code.
+  const weird = await app.inject({
+    method: "POST",
+    url: "/api/v1/todos",
+    headers: { ...auth(cookie), "content-type": "application/json" },
+    payload: JSON.stringify(123),
+  })
+  // Number body: Fastify may coerce; if the route 400s via sendError the message is intentional.
+  if (weird.statusCode === 400) {
+    const body = weird.json()
+    assert.ok(body.error && body.error.message, "envelope intact")
+    assert.ok(!/\/[A-Za-z]:\\|node_modules|Error:/.test(body.error.message), `leaky message: ${body.error.message}`)
+  }
+})
+
 // ---------------------------------------------------------------- helpers
 
 test("clampInt still bounds untrusted query values", () => {

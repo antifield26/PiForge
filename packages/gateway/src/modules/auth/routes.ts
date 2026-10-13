@@ -44,11 +44,14 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const ip = clientIp(req)
+    // Rate-limit keys are case-folded so Admin/admin cannot spend two independent username
+    // budgets. The stored username keeps its original casing.
+    const usernameKey = username.toLowerCase()
     // Spend the budget BEFORE the scrypt comparison. Checking and recording are separated by an
     // `await`, so recording afterwards let N concurrent requests all observe an empty bucket and
     // every one of them reach the password check.
     const ipVerdict = limiters.ip.consume(ip)
-    const userVerdict = limiters.user.consume(username)
+    const userVerdict = limiters.user.consume(usernameKey)
     if (!ipVerdict.allowed || !userVerdict.allowed) {
       const retryAfter = Math.max(ipVerdict.retryAfterSec, userVerdict.retryAfterSec)
       reply.header("retry-after", String(retryAfter))
@@ -73,7 +76,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
 
     // Legitimate login: hand the username budget back so a user cannot lock themselves out,
     // but keep the per-IP spend (an attacker rotating usernames is bounded by the IP bucket).
-    limiters.user.undo(username)
+    limiters.user.undo(usernameKey)
     const { token, expiresAt } = createSession(app.db, user.id)
     recordLogin(app.db, username, true, ip, req.headers["user-agent"])
     reply.setCookie(SESSION_COOKIE, token, {

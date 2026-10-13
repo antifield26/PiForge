@@ -130,7 +130,9 @@ export async function buildApp(config: GatewayConfig, options: BuildOptions = {}
   const webIndex = existsSync(join(webDist, "index.html"))
 
   app.setNotFoundHandler((req, reply) => {
-    if (req.url.startsWith("/api/")) {
+    // Same decode rule as the cross-site check: the router matches decoded paths, so a raw
+    // prefix test would send `/%61pi/...` to the SPA shell instead of a JSON 404.
+    if (looksLikeApiUrl(req.url)) {
       return reply.code(404).send({ error: { code: "NOT_FOUND", message: "route not found" } })
     }
     if (webIndex) return reply.sendFile("index.html")
@@ -207,5 +209,13 @@ function publicMessage(status: number, err: unknown): string {
   if (status === 413) return "request body too large"
   if (status === 415) return "unsupported media type"
   if (status >= 500) return "internal error"
-  return err instanceof Error ? err.message : "request failed"
+  // Only our own typed 400s carry a safe, intentional message. Fastify internals and other
+  // thrown errors must not be echoed: their text can include paths, plugin names, or parse
+  // fragments that belong in the server log, not the client.
+  if (status === 400) {
+    const code = (err as { code?: unknown })?.code
+    if (code === "BAD_REQUEST" && err instanceof Error) return err.message
+    return "bad request"
+  }
+  return "request failed"
 }

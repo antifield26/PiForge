@@ -43,7 +43,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     dbPath: env.DB_PATH ?? "./data/wb.db",
     cloudStorageDir: env.CLOUD_STORAGE_DIR ?? "./data/cloud",
     servicesAllowlistPath: env.SERVICES_ALLOWLIST ?? "./config/services.allowlist.json",
-    backupScript: env.BACKUP_SCRIPT ?? "/home/antifield/piforge/scripts/backup.sh",
+    backupScript: env.BACKUP_SCRIPT ?? "/opt/piforge/scripts/backup.sh",
     jsonBodyLimitBytes: Number(env.JSON_BODY_LIMIT ?? 1024 * 1024),
     uploadBodyLimitBytes: Number(env.UPLOAD_BODY_LIMIT ?? UPLOAD_LIMIT_BYTES),
     metricsRetentionDays: Number(env.METRICS_RETENTION_DAYS ?? 30),

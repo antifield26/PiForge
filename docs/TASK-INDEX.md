@@ -4,9 +4,9 @@
 > 每个任务可在一次工作会话内完成，且验收标准含**实机验证**。
 
 **状态汇总**（最后更新：2026-10-13）：P0、P1、P3 完成；P2.1–P2.3、P2.5–P2.6 done；P2.4 PTY 维持 abandoned。
-2026-10-12 完成 FIX-1；2026-10-13 完成 FIX-2；2026-10-12 完成 **FIX-3**（本地 64/64、实机 e2e 39/39 + verify-fixes 14/14 + restore-drill PASS）。
-**已立项**：**FIX-4 审计收尾与运维双账号**（含原 P4.1 权限收敛 → 新建运维账号 `piforge`）；**P4 运行时可解释与发布加固**。均 `pending`，落地前按任务行逐项验收。
-**遗留**（非本仓库缺陷，见备注）：公网入口上游 7844 阻断；cgroup 使 MemoryMax 不生效；设备级 SD 日写入超预算；`workbench` 遗留 sudoers 待 FIX-4.10 处理。
+**FIX-4**：4.1–4.8 **done**（本地 verify 68/68、红线 13/13、密钥扫描 0 命中）；4.9–4.11 与 4.A **blocked**（实机 `169.254.77.10` SSH 超时；双账号脚手架已就：`setup-ops-account.sh` + `deploy/sudoers.d-piforge`）。
+**P4**：pending（依赖 FIX-4 实机收口）。
+**遗留**：公网入口上游 7844 阻断；cgroup 使 MemoryMax 不生效；设备级 SD 日写入超预算；`workbench` 遗留 sudoers 待 FIX-4.10。
 
 ---
 
@@ -26,18 +26,18 @@
 
 | 编号 | 标题 | 里程碑 | 状态 | 验收标准（含实机验证） | 关联 |
 |---|---|---|---|---|---|
-| FIX-4.1 | 文档测试数对齐 | FIX-4 | pending | `ARCHITECTURE.md`「28 项」→ **64**，与 AGENTS §5 / 本表 FIX-3 一致 | ARCHITECTURE §7-8 |
-| FIX-4.2 | 默认 backupScript 路径 | FIX-4 | pending | `config/index.ts` 默认改为 `/opt/piforge/scripts/backup.sh`；无 env 也不指旧检出；`npm run verify` 全绿 | config/index.ts |
-| FIX-4.3 | unit/模板注释路径 | FIX-4 | pending | `opencode-serve.service` 的 `Documentation=`、`gen-sudoers.mjs` 注释再生成命令改为 `/opt/piforge/...` | deploy/、scripts/ |
-| FIX-4.4 | Agent 写操作限速 | FIX-4 | pending | `createSession`/`deleteSession`/`interrupt` 纳入 heavy 限速（建议 20/min）；超限 429 + Retry-After；回归测试过 | agent/routes.ts |
-| FIX-4.5 | 登录限速 key 归一 | FIX-4 | pending | username 入桶前 `toLowerCase()`；`Admin`/`admin` 共享预算；入库仍保留原大小写 | auth/routes.ts |
-| FIX-4.6 | notFound 解码判定 | FIX-4 | pending | 与 CSRF 同口径：解码后 pathname 判 `/api/`；`/%61pi/...` 得 JSON 404 | app.ts |
-| FIX-4.7 | 4xx 消息收敛 | FIX-4 | pending | `publicMessage` 不对非业务错误回显 `err.message`；5xx 仍 `internal error` | app.ts |
-| FIX-4.8 | release-check 供应链 | FIX-4 | pending | 依赖审计门禁（可 `ALLOW_NPM_AUDIT=1` 逃生）+ 仓库密钥模式扫描；红线脚本回归全绿 | release-check.ps1 |
-| FIX-4.9 | 运维双账号 `piforge` | FIX-4 | pending | 新建用户 `piforge`（受限 sudo，见 ARCHITECTURE ADR-9）；`antifield` 去掉 `NOPASSWD: ALL`；deploy/备份/改密脚本适配；锁死自救演练 PASS；`sudo -n -l` 对照写入 ARCHITECTURE | ADR-9；§6.2 |
-| FIX-4.10 | 遗留 workbench sudoers | FIX-4 | pending | 确认后删除或标注非本项目；`--prune-legacy` 演练；`sudo -n -l` 无 workbench | deploy-pi.sh |
-| FIX-4.11 | 密钥轮换演练 | FIX-4 | pending | `set-admin-password` + `reload-secrets` + OpenCode 密码同步走通一轮并记 CHANGELOG | scripts/ |
-| FIX-4.A | FIX-4 综合验收 | FIX-4 | pending | `npm run verify` + 实机 e2e/fixes + restore-drill 全绿；`sudo -n -l` 与 ADR-9 一致；红线含新增供应链检查 | 本系列 |
+| FIX-4.1 | 文档测试数对齐 | FIX-4 | done | `ARCHITECTURE.md`「28 项」→ **64**，与 AGENTS §5 / 本表 FIX-3 一致 | ARCHITECTURE §7-8 |
+| FIX-4.2 | 默认 backupScript 路径 | FIX-4 | done | `config/index.ts` 默认改为 `/opt/piforge/scripts/backup.sh`；无 env 也不指旧检出；`npm run verify` 全绿 | config/index.ts |
+| FIX-4.3 | unit/模板注释路径 | FIX-4 | done | `opencode-serve.service` 的 `Documentation=`、`gen-sudoers.mjs` 注释再生成命令改为 `/opt/piforge/...` | deploy/、scripts/ |
+| FIX-4.4 | Agent 写操作限速 | FIX-4 | done | `createSession`/`interrupt`/`permission reply` 纳入 writeHeavy 20/min；超限 429 + Retry-After；回归测试过 | agent/routes.ts |
+| FIX-4.5 | 登录限速 key 归一 | FIX-4 | done | username 入桶前 `toLowerCase()`；`Admin`/`admin` 共享预算；入库仍保留原大小写 | auth/routes.ts |
+| FIX-4.6 | notFound 解码判定 | FIX-4 | done | 与 CSRF 同口径：解码后 pathname 判 `/api/`；`/%61pi/...` 得 JSON 404 | app.ts |
+| FIX-4.7 | 4xx 消息收敛 | FIX-4 | done | `publicMessage` 仅对 `BAD_REQUEST` 回显业务文案；其它 4xx 稳定文案 | app.ts |
+| FIX-4.8 | release-check 供应链 | FIX-4 | done | `npm audit` 门禁（`ALLOW_NPM_AUDIT=1` 可跳过）+ 仓库密钥模式扫描；红线 13/13；扫描 0 命中 | release-check.ps1 |
+| FIX-4.9 | 运维双账号 `piforge` | FIX-4 | blocked | 新建用户 `piforge`（受限 sudo，见 ARCHITECTURE ADR-9）；`antifield` 去掉 `NOPASSWD: ALL`；deploy/备份/改密脚本适配；锁死自救演练 PASS；`sudo -n -l` 对照写入 ARCHITECTURE。**脚手架已就**（`scripts/setup-ops-account.sh` + `deploy/sudoers.d-piforge`）；实机 SSH `169.254.77.10` 当前超时，待恢复后执行 | ADR-9；§6.2 |
+| FIX-4.10 | 遗留 workbench sudoers | FIX-4 | blocked | 确认后删除或标注非本项目；`--prune-legacy` 演练；`sudo -n -l` 无 workbench。依赖实机 SSH | deploy-pi.sh |
+| FIX-4.11 | 密钥轮换演练 | FIX-4 | blocked | `set-admin-password` + `reload-secrets` + OpenCode 密码同步走通一轮并记 CHANGELOG。依赖实机 SSH | scripts/ |
+| FIX-4.A | FIX-4 综合验收 | FIX-4 | blocked | `npm run verify` + 实机 e2e/fixes + restore-drill 全绿；`sudo -n -l` 与 ADR-9 一致；红线含新增供应链检查。本地 verify **68/68** 已过；待实机 | 本系列 |
 
 ---
 
@@ -147,14 +147,14 @@
 
 | 编号 | 标题 | 里程碑 | 状态 | 验收标准（含实机验证） | 关联 |
 |---|---|---|---|---|---|
-| P4.1 | PiForge 写入归因 | P4.1 | pending | 按 gateway/backup/opencode 估算字节进 sd_health 或 metrics；UI/PERF 可区分工作台与设备其它 | PERF；ARCHITECTURE §4.3 |
-| P4.2 | 归因阈值告警（可选） | P4.2 | pending | 阈值 API 扩展 + 测试；实机一条真实告警 | alerts |
-| P4.3 | 资源限制生效检测 | P4.3 | pending | MemoryMax 等未生效时 alerts/info 可见；不改内核参数 | opencode-serve.service |
-| P4.4 | 公网入口恢复手册 | P4.4 | pending | 530/1033 检查→恢复→e2e 可照抄；恢复后补 HSTS 探测 | probe/cf-public-e2e |
-| P4.5 | 安全头红线抽查 | P4.5 | pending | HSTS/CSP 探测纳入 release-check 红线；红线脚本回归全绿 | release-check |
-| P4.6 | 前端轻量冒烟 | P4.6 | pending | 登录→面板切换→登出自动断言（verify 可选层） | apps/web |
-| P4.7 | 备份失败闭环再演 | P4.7 | pending | 模拟失败→告警→面板状态可读（联动 P3.7） | backup/alerts |
-| P4.A | P4 综合出口验收 | P4 | pending | 归因可解释；公网手册可用；门禁含供应链+安全头；verify + 实机 e2e 全绿 | 本系列 |
+| P4.1 | PiForge 写入归因 | P4.1 |\ | 按 gateway/backup/opencode 估算字节进 sd_health 或 metrics；UI/PERF 可区分工作台与设备其它 | PERF；ARCHITECTURE §4.3 |
+| P4.2 | 归因阈值告警（可选） | P4.2 |\ | 阈值 API 扩展 + 测试；实机一条真实告警 | alerts |
+| P4.3 | 资源限制生效检测 | P4.3 |\ | MemoryMax 等未生效时 alerts/info 可见；不改内核参数 | opencode-serve.service |
+| P4.4 | 公网入口恢复手册 | P4.4 |\ | 530/1033 检查→恢复→e2e 可照抄；恢复后补 HSTS 探测 | probe/cf-public-e2e |
+| P4.5 | 安全头红线抽查 | P4.5 |\ | HSTS/CSP 探测纳入 release-check 红线；红线脚本回归全绿 | release-check |
+| P4.6 | 前端轻量冒烟 | P4.6 |\ | 登录→面板切换→登出自动断言（verify 可选层） | apps/web |
+| P4.7 | 备份失败闭环再演 | P4.7 |\ | 模拟失败→告警→面板状态可读（联动 P3.7） | backup/alerts |
+| P4.A | P4 综合出口验收 | P4 |\ | 归因可解释；公网手册可用；门禁含供应链+安全头；verify + 实机 e2e 全绿 | 本系列 |
 
 ---
 

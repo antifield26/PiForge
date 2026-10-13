@@ -63,6 +63,40 @@ if ($MyInvocation.InvocationName -eq '.') { return }
 Step "npm run verify (typecheck + tests)" { npm run verify }
 Step "npm run build" { npm run build }
 
+# Supply-chain and secret hygiene (FIX-4.8). Local-only: these do not need the Pi.
+Step "dependency audit (npm audit)" {
+  if ($env:ALLOW_NPM_AUDIT -eq '1') {
+    Write-Host "[release] ALLOW_NPM_AUDIT=1 — skipping npm audit gate" -ForegroundColor Yellow
+    return
+  }
+  npm audit --omit=dev
+}
+Step "repo secret-pattern scan" {
+  $patterns = @(
+    'sk-[A-Za-z0-9]{20,}',
+    'BEGIN [A-Z ]*PRIVATE KEY',
+    'ADMIN_PASSWORD\s*=\s*[A-Za-z0-9+/=_-]{6,}',
+    'SESSION_SECRET\s*=\s*[A-Za-z0-9+/=_-]{8,}',
+    'OPENCODE_PASSWORD\s*=\s*[A-Za-z0-9+/=_-]{6,}'
+  )
+  $hits = @()
+  $files = Get-ChildItem -Recurse -File -Include *.ts,*.tsx,*.mjs,*.js,*.sh,*.ps1,*.json,*.md,*.service,*.timer |
+    Where-Object { $_.FullName -notmatch 'node_modules|\\opencode\\|\\dist\\|package-lock' }
+  foreach ($f in $files) {
+    $text = Get-Content $f.FullName -Raw -Encoding UTF8
+    foreach ($p in $patterns) {
+      if ($text -match $p) {
+        $hits += "$($f.FullName): $($Matches[0].Substring(0, [Math]::Min(40, $Matches[0].Length)))"
+      }
+    }
+  }
+  if ($hits.Count -gt 0) {
+    $hits | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
+    throw "secret-looking pattern(s) found in tracked source ($($hits.Count) hit(s))"
+  }
+  Write-Host "[release] secret scan clean ($($files.Count) files)" -ForegroundColor Green
+}
+
 if (-not $SkipDeploy) {
   Step "ssh reachable" {
     ssh -o BatchMode=yes -o ConnectTimeout=8 $PiHost "echo ok" | Out-Null

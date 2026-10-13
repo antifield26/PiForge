@@ -1,6 +1,6 @@
 [Unit]
 Description=OpenCode v2 server (localhost only)
-Documentation=file:/home/antifield/piforge/deploy/opencode-serve.service
+Documentation=file:/opt/piforge/deploy/opencode-serve.service
 After=network-online.target
 Wants=network-online.target
 

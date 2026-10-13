@@ -1,0 +1,58 @@
+#
+# /etc/sudoers.d/piforge
+#
+# Ops account sudoers for the dual-account model (ADR-9 / FIX-4.9).
+# User `piforge` is the human ops login: it may run only the PiForge runbooks
+# and allowlisted systemctl verbs. It is NEVER NOPASSWD: ALL.
+#
+# Install (after scripts/setup-ops-account.sh stages it):
+#   sudo visudo -c -f /etc/sudoers.d/piforge && sudo chmod 0440 /etc/sudoers.d/piforge
+#
+# NOTE: paths are the post-migration runtime (/opt/piforge) and state (/var/lib/piforge).
+# Keep this list tight; anything added here is root-equivalent for that command line.
+
+# sudoers is parsed top-down: define the alias before the user rule.
+Cmnd_Alias PIFORGE_OPS = \
+    /opt/piforge/scripts/deploy-pi.sh, \
+    /opt/piforge/scripts/deploy-pi.sh --prune-legacy, \
+    /usr/bin/bash /opt/piforge/scripts/deploy-pi.sh, \
+    /usr/bin/bash /opt/piforge/scripts/deploy-pi.sh --prune-legacy, \
+    /opt/piforge/scripts/backup.sh, \
+    /usr/bin/bash /opt/piforge/scripts/backup.sh, \
+    /opt/piforge/scripts/restore-drill.sh, \
+    /usr/bin/bash /opt/piforge/scripts/restore-drill.sh, \
+    /opt/piforge/scripts/restore-drill.sh --all, \
+    /usr/bin/bash /opt/piforge/scripts/restore-drill.sh --all, \
+    /opt/piforge/scripts/set-admin-password.sh, \
+    /usr/bin/bash /opt/piforge/scripts/set-admin-password.sh, \
+    /opt/piforge/scripts/reload-secrets.sh, \
+    /usr/bin/bash /opt/piforge/scripts/reload-secrets.sh, \
+    /opt/piforge/scripts/rollback-pi.sh, \
+    /usr/bin/bash /opt/piforge/scripts/rollback-pi.sh, \
+    /opt/piforge/scripts/oc-snapshot.sh, \
+    /usr/bin/bash /opt/piforge/scripts/oc-snapshot.sh, \
+    /usr/bin/node /opt/piforge/scripts/verify-e2e.mjs, \
+    /usr/bin/node /opt/piforge/scripts/verify-fixes.mjs, \
+    /usr/bin/node /opt/piforge/scripts/verify-login.mjs, \
+    /usr/bin/node /opt/piforge/scripts/verify-p3.mjs, \
+    /usr/bin/node /opt/piforge/scripts/verify-p3-audit.mjs, \
+    /usr/bin/node /opt/piforge/scripts/verify-p3-backup.mjs, \
+    /usr/bin/node /opt/piforge/scripts/verify-deploy.mjs, \
+    /usr/bin/node /opt/piforge/scripts/oc-contract.mjs, \
+    /usr/bin/node /opt/piforge/scripts/gen-sudoers.mjs *, \
+    /usr/sbin/visudo -c -f /etc/sudoers.d/piforge, \
+    /usr/sbin/visudo -c -f /etc/sudoers.d/piforge-gw, \
+    /usr/bin/systemctl status *.service, \
+    /usr/bin/systemctl start nginx.service, \
+    /usr/bin/systemctl stop nginx.service, \
+    /usr/bin/systemctl restart nginx.service, \
+    /usr/bin/systemctl restart cloudflared.service, \
+    /usr/bin/systemctl restart wb-gateway.service, \
+    /usr/bin/systemctl start opencode-serve.service, \
+    /usr/bin/systemctl stop opencode-serve.service, \
+    /usr/bin/systemctl restart opencode-serve.service, \
+    /usr/bin/systemctl restart piforge-backup.service, \
+    /usr/bin/systemctl start piforge-backup.timer, \
+    /usr/bin/systemctl stop piforge-backup.timer
+
+piforge ALL=(root) NOPASSWD: PIFORGE_OPS
