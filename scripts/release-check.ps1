@@ -54,6 +54,17 @@ function Test-RedLineCheck([scriptblock]$Remote) {
   if ([int]$count -gt 0) {
     throw "wb-gateway/opencode-serve Environment exposes $count secret-looking value(s) (red line 3: secrets only in /etc/piforge/*.env)"
   }
+  # Security headers on the local API (P4.5). HSTS is Cloudflare's job on the public edge;
+  # here we require the gateway's own headers so a direct 8787 hit is not bare.
+  $result = & $Remote "curl -sS -m 5 -D - -o /dev/null http://127.0.0.1:8787/api/v1/health | tr -d '\r' | grep -iE '^(x-content-type-options|content-security-policy|x-frame-options):' | wc -l"
+  if ($result.Code -ne 0) {
+    throw "security-header probe failed (curl/ssh exit $($result.Code))"
+  }
+  $headerCount = (@($result.Output) -join "").Trim()
+  if ($headerCount -notmatch '^\d+$') { throw "unexpected header probe output: '$headerCount'" }
+  if ([int]$headerCount -lt 3) {
+    throw "gateway /api/v1/health is missing security headers (got $headerCount of x-content-type-options/csp/x-frame-options) (red line: response hardening)"
+  }
 }
 
 # scripts/tests/release-check-redlines.ps1 dot-sources this file (InvocationName '.') to drive

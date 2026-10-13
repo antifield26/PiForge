@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import { readFileSync } from "node:fs"
-import type { MetricKind, MetricPoint, SdHealth, SystemSnapshot } from "@piforge/shared"
+import type { MetricKind, MetricPoint, ResourceLimits, SdHealth, SystemSnapshot, WriteAttribution } from "@piforge/shared"
 import { getSettingNumber, setSetting, type Db } from "../../db/index.js"
 
 const execFileAsync = promisify(execFile)
@@ -275,4 +275,97 @@ async function readUptime(): Promise<number> {
   } catch {
     return 0
   }
+}
+
+// ---------------------------------------------------------------------------
+// Write attribution (P4.1) and resource-limit probes (P4.3)
+// ---------------------------------------------------------------------------
+
+/** Cumulative bytes this process (or pid) has written, from /proc/<pid>/io. */
+export function readProcWriteBytes(pid?: number): number | null {
+  try {
+    const raw = readFileSync(pid ? `/proc/${pid}/io` : "/proc/self/io", "utf8")
+    const m = /write_bytes:\s*(\d+)/.exec(raw)
+    return m ? Number(m[1]) : null
+  } catch {
+    return null
+  }
+}
+
+async function readOpenCodePid(): Promise<number | null> {
+  try {
+    const { stdout } = await execFileAsync("pgrep", ["-n", "-x", "opencode"], { timeout: 3000 })
+    const pid = Number(stdout.trim().split(/\s+/)[0])
+    return Number.isInteger(pid) && pid > 0 ? pid : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Best-effort split of SD write volume between PiForge's own processes and "everything else".
+ * `/proc/<pid>/io` is unreadable across uids, so a null means "not observable from this
+ * process", never zero. Residual is the device-level day rate minus the attributed sum —
+ * that is where Minecraft/nginx live.
+ */
+export async function readWriteAttribution(db: Db, now = Date.now()): Promise<WriteAttribution> {
+  const gatewayWriteBytes = readProcWriteBytes()
+  const ocPid = await readOpenCodePid()
+  const openCodeWriteBytes = ocPid != null ? readProcWriteBytes(ocPid) : null
+  const backupRow = db
+    .prepare("SELECT bytes, status FROM backup_runs WHERE status = 'ok' AND bytes IS NOT NULL ORDER BY id DESC LIMIT 1")
+    .get() as { bytes: number | null } | undefined
+  const lastBackupBytes = backupRow?.bytes ?? null
+
+  const attributedParts = [gatewayWriteBytes, openCodeWriteBytes, lastBackupBytes].filter(
+    (n): n is number => typeof n === "number" && n > 0,
+  )
+  const attributedBytes = attributedParts.reduce((a, b) => a + b, 0)
+  const deviceDayWriteBytes = dayWriteCache
+  return {
+    gatewayWriteBytes,
+    openCodeWriteBytes,
+    lastBackupBytes,
+    attributedBytes,
+    deviceDayWriteBytes,
+    residualDayWriteBytes: Math.max(0, deviceDayWriteBytes - attributedBytes),
+    capturedAt: now,
+  }
+}
+
+/**
+ * True when the unit's cgroup memory cap is actually enforced. On kernels built with
+ * `cgroup_disable=memory` (this Pi), `memory.max` is "max" and MemoryMax= is decorative.
+ */
+export function readResourceLimits(): ResourceLimits {
+  const paths = [
+    "/sys/fs/cgroup/system.slice/opencode-serve.service/memory.max",
+    "/sys/fs/cgroup/opencode-serve.service/memory.max",
+  ]
+  let memoryMaxBytes: number | null = null
+  let effective = false
+  let source = "unavailable"
+  for (const p of paths) {
+    try {
+      const raw = readFileSync(p, "utf8").trim()
+      source = p
+      if (raw === "max") {
+        memoryMaxBytes = null
+        effective = false
+        break
+      }
+      const n = Number(raw)
+      if (Number.isFinite(n) && n > 0) {
+        memoryMaxBytes = n
+        effective = true
+        break
+      }
+    } catch {
+      /* try next */
+    }
+  }
+  const note = effective
+    ? `opencode memory.max enforced (${source})`
+    : "opencode MemoryMax is not enforced (cgroup memory controller missing or max); platform limit, see PERF/TASK-INDEX"
+  return { openCodeMemoryMaxBytes: memoryMaxBytes, openCodeMemoryLimitEffective: effective, note }
 }

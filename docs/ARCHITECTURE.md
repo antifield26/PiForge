@@ -122,6 +122,9 @@ Adapter 订阅 /api/event（单一上游连接）→ 网关 SSE /api/v1/agent/ev
 GET /console/system、/console/sd、/console/perf: 只读（完全不写库），避免轮询放大 SD 写入；
          日写入速率由 5min flush 计算并缓存在内存（进程内 `dayWriteCache`）
 保留期：METRICS_RETENTION_DAYS（默认 30 天）、AUDIT_RETENTION_DAYS（默认 180 天）
+写入归因（P4.1）：`/console/perf.writeAttribution` = gateway(`proc/self/io`) + opencode(`proc/pid/io`)
+         + 上次备份体积；残差 = 设备日写入 − 归因（Minecraft 等）。
+资源限制（P4.3）：`/console/perf.limits` 报告 opencode `memory.max` 是否真生效；未生效发 `limit_ineffective` 告警。
 ```
 
 SD 写入量：`/proc/diskstats` 计数器是「本次开机以来」，因此持久化累计基线（`settings.sd_write_accum` / `sd_write_boot`）在重启时折叠，UI 的 `totalWriteBytes` 才是跨重启累计值。

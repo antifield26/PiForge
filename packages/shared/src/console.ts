@@ -64,7 +64,7 @@ export interface MetricsSummary {
   last?: number
 }
 
-export type AlertKind = "backup_failed" | "service_down" | "sd_write_high" | "mem_low"
+export type AlertKind = "backup_failed" | "service_down" | "sd_write_high" | "mem_low" | "limit_ineffective"
 
 export type AlertSeverity = "info" | "warning" | "critical"
 
@@ -88,4 +88,27 @@ export interface AlertThresholds {
   memAvailableMb: number
   /** minutes to suppress repeat alerts with the same dedupeKey */
   cooldownMinutes: number
+}
+
+/** Best-effort SD write split between PiForge processes and the rest of the box (P4.1). */
+export interface WriteAttribution {
+  /** /proc/self/io write_bytes of the gateway; null when unreadable */
+  gatewayWriteBytes: number | null
+  /** /proc/<opencode-pid>/io write_bytes; null when no process or unreadable */
+  openCodeWriteBytes: number | null
+  /** last successful backup archive size */
+  lastBackupBytes: number | null
+  attributedBytes: number
+  /** device-level day rate from the SD sampler */
+  deviceDayWriteBytes: number
+  /** device day rate minus attributedBytes (Minecraft/nginx/live here) */
+  residualDayWriteBytes: number
+  capturedAt: number
+}
+
+/** Whether systemd MemoryMax on opencode-serve is actually enforced (P4.3). */
+export interface ResourceLimits {
+  openCodeMemoryMaxBytes: number | null
+  openCodeMemoryLimitEffective: boolean
+  note: string
 }

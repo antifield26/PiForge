@@ -5,7 +5,7 @@
 
 **状态汇总**（最后更新：2026-10-13）：P0、P1、P3 完成；P2.1–P2.3、P2.5–P2.6 done；P2.4 PTY 维持 abandoned。
 **FIX-4**：4.1–4.8 **done**（本地 verify 68/68、红线 13/13、密钥扫描 0 命中）；4.9–4.11 与 4.A **blocked**（实机 `169.254.77.10` SSH 超时；双账号脚手架已就：`setup-ops-account.sh` + `deploy/sudoers.d-piforge`）。
-**P4**：pending（依赖 FIX-4 实机收口）。
+**P4**：4.1/4.3/4.4/4.5 **done**（本地 verify **70/70**、红线 **16/16**；`/console/perf` 归因+limits、PUBLIC-RECOVERY 手册、安全头红线）；4.2 可选 pending；4.6/4.7/4.A pending（依赖实机）。
 **遗留**：公网入口上游 7844 阻断；cgroup 使 MemoryMax 不生效；设备级 SD 日写入超预算；`workbench` 遗留 sudoers 待 FIX-4.10。
 
 ---
@@ -147,14 +147,14 @@
 
 | 编号 | 标题 | 里程碑 | 状态 | 验收标准（含实机验证） | 关联 |
 |---|---|---|---|---|---|
-| P4.1 | PiForge 写入归因 | P4.1 |\ | 按 gateway/backup/opencode 估算字节进 sd_health 或 metrics；UI/PERF 可区分工作台与设备其它 | PERF；ARCHITECTURE §4.3 |
-| P4.2 | 归因阈值告警（可选） | P4.2 |\ | 阈值 API 扩展 + 测试；实机一条真实告警 | alerts |
-| P4.3 | 资源限制生效检测 | P4.3 |\ | MemoryMax 等未生效时 alerts/info 可见；不改内核参数 | opencode-serve.service |
-| P4.4 | 公网入口恢复手册 | P4.4 |\ | 530/1033 检查→恢复→e2e 可照抄；恢复后补 HSTS 探测 | probe/cf-public-e2e |
-| P4.5 | 安全头红线抽查 | P4.5 |\ | HSTS/CSP 探测纳入 release-check 红线；红线脚本回归全绿 | release-check |
-| P4.6 | 前端轻量冒烟 | P4.6 |\ | 登录→面板切换→登出自动断言（verify 可选层） | apps/web |
-| P4.7 | 备份失败闭环再演 | P4.7 |\ | 模拟失败→告警→面板状态可读（联动 P3.7） | backup/alerts |
-| P4.A | P4 综合出口验收 | P4 |\ | 归因可解释；公网手册可用；门禁含供应链+安全头；verify + 实机 e2e 全绿 | 本系列 |
+| P4.1 | PiForge 写入归因 | P4 | done | `/console/perf.writeAttribution`：gateway/opencode `/proc/*/io` + 备份体积；残差=设备日写入−归因。本地 verify 覆盖 | PERF；ARCHITECTURE §4.3 |
+| P4.2 | 归因阈值告警（可选） | P4 | pending | 阈值 API 扩展 + 测试；实机一条真实告警。若 P4.1 已够用可 abandoned | alerts |
+| P4.3 | 资源限制生效检测 | P4 | done | `/console/perf.limits` + `limit_ineffective` 告警（冷却）；不改内核参数 | metrics.ts |
+| P4.4 | 公网入口恢复手册 | P4 | done | `docs/PUBLIC-RECOVERY.md` 分层检查→恢复→e2e 验收 | probe/cf-public-e2e |
+| P4.5 | 安全头红线抽查 | P4 | done | release-check 红线探测 `/api/v1/health` 的 CSP/nosniff/frame-options；红线 16/16 | release-check |
+| P4.6 | 前端轻量冒烟 | P4 | pending | 登录→面板切换→登出自动断言（verify 可选层） | apps/web |
+| P4.7 | 备份失败闭环再演 | P4 | pending | 模拟失败→告警→面板状态可读（联动 P3.7）；依赖实机 | backup/alerts |
+| P4.A | P4 综合出口验收 | P4 | blocked | 归因可解释；公网手册可用；门禁含供应链+安全头；verify + 实机 e2e 全绿。本地 70/70+16/16 已过，待实机 | 本系列 |
 
 ---
 

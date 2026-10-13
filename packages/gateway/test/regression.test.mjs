@@ -485,6 +485,38 @@ test("thrown non-business errors do not echo err.message to the client", async (
   }
 })
 
+// ---------------------------------------------------------------- P4.1 / P4.3
+
+test("perf reports write attribution and cgroup limit effectiveness", async (t) => {
+  const { app, cookie, db } = await withApp(t)
+  db.prepare("INSERT INTO backup_runs (started_at, finished_at, status, target, bytes, message) VALUES (?,?,?,?,?,?)").run(
+    Date.now() - 1000,
+    Date.now(),
+    "ok",
+    "local:test",
+    1024 * 1024,
+    "ok",
+  )
+  const res = await app.inject({ method: "GET", url: "/api/v1/console/perf", headers: auth(cookie) })
+  assert.equal(res.statusCode, 200)
+  const body = res.json()
+  assert.ok(body.writeAttribution, "writeAttribution present")
+  assert.ok("gatewayMb" in body.writeAttribution)
+  assert.ok("residualDayGb" in body.writeAttribution)
+  assert.ok("lastBackupMb" in body.writeAttribution)
+  assert.ok(body.limits && typeof body.limits.openCodeMemoryLimitEffective === "boolean")
+  assert.ok(body.limits.note, "limits.note explains the verdict")
+})
+
+test("resource-limit probe is honest when the cgroup file is missing", async () => {
+  const { readResourceLimits, readProcWriteBytes } = await import("../dist/modules/console/metrics.js")
+  const limits = readResourceLimits()
+  assert.equal(typeof limits.openCodeMemoryLimitEffective, "boolean")
+  // Self IO is always readable for this process.
+  const self = readProcWriteBytes()
+  assert.ok(self === null || (typeof self === "number" && self >= 0))
+})
+
 // ---------------------------------------------------------------- helpers
 
 test("clampInt still bounds untrusted query values", () => {

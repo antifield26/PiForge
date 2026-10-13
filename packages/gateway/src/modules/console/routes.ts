@@ -21,6 +21,7 @@ import {
   runDetectors,
   setThresholds,
 } from "./alerts.js"
+import { readResourceLimits } from "./metrics.js"
 import { clientIp } from "../../util/net.js"
 import { checkHeavy, createHeavyLimiter } from "../../auth/ratelimit.js"
 import { clampInt, sendError } from "../../util/validate.js"
@@ -57,6 +58,24 @@ export const consoleRoutes: FastifyPluginAsync = async (app) => {
           .get(id) as { title: string; message: string; severity: string } | undefined
         if (row) {
           void deliverAlert(row).catch((err) => app.log.debug({ err }, "alert webhook failed"))
+        }
+      }
+      // P4.3: surface a decorative MemoryMax once per cooldown.
+      const limits = readResourceLimits()
+      if (!limits.openCodeMemoryLimitEffective) {
+        const id = raiseAlert(app.db, {
+          kind: "limit_ineffective",
+          severity: "info",
+          title: "OpenCode 内存上限未生效",
+          message: limits.note,
+          dedupeKey: "limits:opencode-memory-max",
+        })
+        if (id != null) {
+          void deliverAlert({
+            title: "OpenCode 内存上限未生效",
+            message: limits.note,
+            severity: "info",
+          }).catch(() => undefined)
         }
       }
     } catch (err) {
