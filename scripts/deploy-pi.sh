@@ -10,7 +10,8 @@
 # Privilege model installed here:
 #   piforge-gw  runs wb-gateway.service, no sudo except /etc/sudoers.d/piforge-gw
 #   piforge-oc  runs opencode-serve.service, no sudo, home /var/lib/piforge-oc
-#   antifield   stays the human/ops login and keeps its own sudoers file (untouched)
+#   antifield   human admin login — keeps NOPASSWD: ALL (user decision 2026-10-14)
+#   piforge     optional ops login with PIFORGE_OPS only (least-privilege alternative)
 #
 # Environment:
 #   FORCE_ENV=1   rewrite /etc/piforge/gateway.env and opencode.env even if they exist
@@ -488,6 +489,25 @@ log "installed $SUDOERS (0440 root:root, visudo -f OK)"
 if ! as_root visudo -c >/dev/null 2>&1; then
   log "WARN: 'visudo -c' reports problems outside this deploy (usually a non-0440 mode in /etc/sudoers.d):"
   as_root visudo -c 2>&1 | grep -v '解析正确\|parsed OK' | sed 's/^/[deploy]   /' || true
+fi
+
+# ---------------------------------------------------------------------------
+# 7.4 Human admin sudoers (antifield keeps NOPASSWD: ALL — user decision)
+# ---------------------------------------------------------------------------
+# antifield is the personal/break-glass admin login and MUST keep passwordless sudo.
+# A dual-account experiment removed this drop-in; deploy always reinstalls it so the
+# admin path cannot be left half-cut after a scripts rollout.
+ANTIFIELD_SUDOERS=/etc/sudoers.d/010_antifield-nopasswd
+ANTIFIELD_TEMPLATE="$PIFORGE/deploy/sudoers.d-antifield-nopasswd"
+if [[ -f "$ANTIFIELD_TEMPLATE" ]]; then
+  as_root install -m 0440 -o root -g root "$ANTIFIELD_TEMPLATE" "$ANTIFIELD_SUDOERS"
+  if as_root visudo -c -f "$ANTIFIELD_SUDOERS" >/dev/null 2>&1; then
+    log "installed $ANTIFIELD_SUDOERS (antifield NOPASSWD: ALL, admin login)"
+  else
+    die "visudo rejected $ANTIFIELD_SUDOERS — admin login would be locked out of passwordless sudo"
+  fi
+else
+  log "WARN: $ANTIFIELD_TEMPLATE missing — antifield NOPASSWD not reinstalled"
 fi
 
 # ---------------------------------------------------------------------------

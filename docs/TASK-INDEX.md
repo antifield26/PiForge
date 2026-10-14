@@ -4,7 +4,7 @@
 > 每个任务可在一次工作会话内完成，且验收标准含**实机验证**。
 
 **状态汇总**（最后更新：2026-10-14）：P0、P1、P3 完成；P2.1–P2.3、P2.5–P2.6 done；P2.4 PTY 维持 abandoned。
-**FIX-4**：4.1–4.11 与 4.A **done**（本地 verify 70/70、红线 16/16；实机 e2e **39/39**、fixes **14/14**、restore-drill **PASS**）。**运维双账号已切换**：`piforge` 受限 sudo（PIFORGE_OPS）；`antifield` 已去掉 `NOPASSWD: ALL`（备份 `010_antifield-nopasswd.bak-20261014-094448`）；遗留 `workbench-systemctl` 已移除（备份 `.bak-20261014-094437`）。
+**FIX-4**：4.1–4.11 与 4.A **done**（本地 verify 70/70、红线 16/16；实机 e2e **39/39**、fixes **14/14**、restore-drill **PASS**）。**运维分层（2026-10-14 修订）**：`antifield` **保留 `NOPASSWD: ALL`**（管理员）；可选 `piforge` 仅 PIFORGE_OPS；遗留 `workbench-systemctl` 已移除。
 **P4**：4.1/4.3/4.4/4.5 done；4.2 可选 pending；4.6/4.7/4.A 待收口。
 **遗留**：公网入口上游 7844 阻断（见 PUBLIC-RECOVERY.md）；cgroup 使 MemoryMax 不生效（已告警）；设备级 SD 日写入超预算。
 **遗留**：公网入口上游 7844 阻断；cgroup 使 MemoryMax 不生效；设备级 SD 日写入超预算；`workbench` 遗留 sudoers 待 FIX-4.10。
@@ -35,7 +35,7 @@
 | FIX-4.6 | notFound 解码判定 | FIX-4 | done | 与 CSRF 同口径：解码后 pathname 判 `/api/`；`/%61pi/...` 得 JSON 404 | app.ts |
 | FIX-4.7 | 4xx 消息收敛 | FIX-4 | done | `publicMessage` 仅对 `BAD_REQUEST` 回显业务文案；其它 4xx 稳定文案 | app.ts |
 | FIX-4.8 | release-check 供应链 | FIX-4 | done | `npm audit` 门禁（`ALLOW_NPM_AUDIT=1` 可跳过）+ 仓库密钥模式扫描；红线 13/13；扫描 0 命中 | release-check.ps1 |
-| FIX-4.9 | 运维双账号 `piforge` | FIX-4 | done | 新建用户 `piforge`（受限 sudo，见 ARCHITECTURE ADR-9）；`antifield` 去掉 `NOPASSWD: ALL`；deploy/备份/改密脚本适配；锁死自救演练 PASS；`sudo -n -l` 对照写入 ARCHITECTURE。**脚手架已就**（`scripts/setup-ops-account.sh` + `deploy/sudoers.d-piforge`）；实机 SSH `169.254.77.10` 当前超时，待恢复后执行 | ADR-9；§6.2 |
+| FIX-4.9 | 运维双账号 `piforge` | FIX-4 | done | 新建可选运维 `piforge`（仅 PIFORGE_OPS）；**`antifield` 保留 NOPASSWD: ALL（管理员，用户决定）**；deploy 自动重装 `010_antifield-nopasswd`；实机 `sudo -n` 验证通过。**脚手架已就**（`scripts/setup-ops-account.sh` + `deploy/sudoers.d-piforge`）；实机 SSH `169.254.77.10` 当前超时，待恢复后执行 | ADR-9；§6.2 |
 | FIX-4.10 | 遗留 workbench sudoers | FIX-4 | done | 确认后删除或标注非本项目；`--prune-legacy` 演练；`sudo -n -l` 无 workbench。依赖实机 SSH | deploy-pi.sh |
 | FIX-4.11 | 密钥轮换演练 | FIX-4 | done | `set-admin-password` + `reload-secrets` + OpenCode 密码同步走通一轮并记 CHANGELOG。依赖实机 SSH | scripts/ |
 | FIX-4.A | FIX-4 综合验收 | FIX-4 | done | `npm run verify` + 实机 e2e/fixes + restore-drill 全绿；`sudo -n -l` 与 ADR-9 一致；红线含新增供应链检查。本地 verify **68/68** 已过；待实机 | 本系列 |
@@ -179,6 +179,6 @@
 | P0.4 | 权限审批 UI 于 2026-10-12 补齐（面板内允许/拒绝/始终允许） |
 | P0.2 | 会话表每小时清理过期行；登录限速 IP+用户名；FIX-3 起限速改为原子扣减（此前可被并发绕过），`AUDIT_RETENTION_DAYS` 默认 180 天清理审计/告警/备份记录 |
 | FIX-3 | 遗留（非仓库缺陷，已记录）：① 公网入口 `cloud.antifield.work` 返回 530/1033，根因是上游阻断到 Cloudflare 边缘的 7844 出站，重启 cloudflared 无效，SSH/局域网正常；② 内核 `cgroup_disable=memory` 使 `opencode-serve.service` 的 `MemoryMax=1500M` 不可执行（未改内核参数）；③ 实机 `/etc/sudoers.d/workbench-systemctl` 给遗留 `workbench` 用户免密 systemctl → **FIX-4.10** 处理；④ SD 日写入 ≈3 GB（设备级，含 Minecraft/nginx）高于 1.5 GB/日 预算 → **P4.1** 归因后解释 |
-| FIX-1 | 未落地独立评估文档（按用户要求只记 CHANGELOG）；遗留：`antifield` 自身仍保留 NOPASSWD sudo → **FIX-4.9** 双账号收敛 |
-| FIX-4.9 | **方案已定（2026-10-13）**：双账号——新建运维账号 `piforge`（受限 sudo，部署/备份/改密），`antifield` 过渡后取消 `NOPASSWD: ALL`；服务账号 `piforge-gw`/`piforge-oc` 不变。详见 ARCHITECTURE ADR-9。实现时必须含锁死自救演练。 |
+| FIX-1 | 未落地独立评估文档（按用户要求只记 CHANGELOG）；`antifield` **保留 NOPASSWD: ALL**（管理员，用户决定 2026-10-14；非遗留缺陷） |
+| FIX-4.9 | **方案修订（2026-10-14）**：`antifield` **保留 NOPASSWD: ALL** 作为管理员；`piforge` 为可选最小权限运维；服务账号 `piforge-gw`/`piforge-oc` 不变。详见 ARCHITECTURE ADR-9。实现时必须含锁死自救演练。 |
 | P4 | 依赖 FIX-4 基本完成；P4.2 可选（若 P4.1 归因已够用可 abandoned）；P4.4 在上游网络恢复前保持可照抄手册 + blocked 注记即可 |

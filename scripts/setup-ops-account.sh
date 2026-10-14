@@ -3,10 +3,14 @@
 #
 #   sudo bash /opt/piforge/scripts/setup-ops-account.sh [--demote-antifield]
 #
-# Dual-account model (FIX-4.9):
-#   piforge   — human ops: SSH login + NOPASSWD only for PIFORGE_OPS (runbooks, allowlisted systemctl)
-#   antifield — transition login; --demote-antifield removes NOPASSWD: ALL AFTER piforge is proven
+# Dual-account model (FIX-4.9, revised 2026-10-14):
+#   antifield — human ADMIN login, keeps NOPASSWD: ALL (user decision; break-glass).
+#   piforge   — optional ops login: SSH + NOPASSWD only for PIFORGE_OPS (runbooks).
 #   piforge-gw / piforge-oc — service users (unchanged, no sudo)
+#
+# --demote-antifield is retained for emergency lockdown only. It is NOT the default
+# and must never run against the personal admin account without an explicit operator
+# decision. Prefer keeping antifield as NOPASSWD: ALL.
 #
 # Safety:
 #   * refuses to demote antifield until `piforge` exists and its sudoers parses
@@ -122,6 +126,8 @@ if ((DEMOTE)); then
   if [[ -z "$ANTIFIELD_SUDO" ]]; then
     log "no antifield sudoers file found — nothing to demote"
   else
+    log "WARN: --demote-antifield removes the personal admin NOPASSWD. Re-run deploy-pi.sh"
+    log "      to restore it (deploy/sudoers.d-antifield-nopasswd)."
     for f in $ANTIFIELD_SUDO; do
       cp -a "$f" "$f.bak-$STAMP"
       # Drop NOPASSWD: ALL lines / the whole drop-in if it only grants that.
@@ -141,8 +147,11 @@ if ((DEMOTE)); then
   log "  ssh piforge@<host>  'sudo -n -l'   # must show PIFORGE_OPS only"
 else
   if [[ -n "$ANTIFIELD_SUDO" ]]; then
-    log "NOTE: antifield sudoers still present ($ANTIFIELD_SUDO)."
-    log "      After piforge SSH works, re-run with --demote-antifield (keeps backups)."
+    log "antifield admin sudoers present (NOPASSWD: ALL is the intended admin model)."
+    log "      Emergency lockdown only: --demote-antifield (then deploy-pi.sh restores it)."
+  else
+    log "NOTE: antifield admin sudoers missing — run deploy-pi.sh to restore"
+    log "      deploy/sudoers.d-antifield-nopasswd (user decision: keep admin NOPASSWD)."
   fi
 fi
 
@@ -151,12 +160,12 @@ fi
 # ---------------------------------------------------------------------------
 cat <<'EOF'
 [ops] ---- self-rescue checklist (do not skip) ----
-  1. Keep ONE existing SSH session open as antifield while you test piforge.
-  2. From a NEW terminal: ssh piforge@<host> then `sudo -n /opt/piforge/scripts/verify-e2e.mjs`.
-  3. Confirm `sudo -n -l -U piforge` shows only PIFORGE_OPS (never ALL).
-  4. Only then run: sudo bash setup-ops-account.sh --demote-antifield
-  5. Re-check from a third session; if locked out, use the still-open antifield session
-     or the Pi console/HDMI login to restore /etc/sudoers.d/*antifield*.bak-<stamp>.
+  1. antifield keeps NOPASSWD: ALL (personal admin). piforge is the least-privilege ops login.
+  2. From a NEW terminal: ssh piforge@<host> then `sudo -n /usr/local/bin/node /opt/piforge/scripts/verify-e2e.mjs`.
+  3. Confirm `sudo -n -l -U piforge` shows only PiForge runbooks (never ALL).
+  4. Do NOT run --demote-antifield on the personal admin account unless locking down on purpose.
+  5. If admin passwordless sudo is ever lost: sudo bash /opt/piforge/scripts/deploy-pi.sh
+     (reinstalls /etc/sudoers.d/010_antifield-nopasswd).
 [ops] --------------------------------------------
 EOF
 

@@ -1,0 +1,9 @@
+# /etc/sudoers.d/010_antifield-nopasswd
+#
+# Human admin account (user decision 2026-10-14): antifield keeps NOPASSWD: ALL.
+# This is the break-glass / personal admin login on the Pi. Service accounts
+# (piforge-gw / piforge-oc) and the optional ops login (piforge) stay least-privilege.
+#
+# Installed by scripts/deploy-pi.sh. Do not use this form for service users.
+
+antifield ALL=(ALL) NOPASSWD: ALL
