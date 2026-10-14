@@ -225,7 +225,7 @@ PiForge/
 │   │   ├── util/             # 校验、客户端 IP
 │   │   └── config/
 │   └── shared/src/           # 共享类型
-├── packages/gateway/test/    # node:test（64 项）
+├── packages/gateway/test/    # node:test（70 项）
 ├── config/services.allowlist.json
 ├── deploy/                   # systemd units + sudoers 模板 + opencode 权限策略
 └── scripts/                  # 部署/备份/恢复/诊断（legacy/ 收纳已废弃脚本，lib/ 为共享库）
@@ -247,7 +247,7 @@ PiForge/
 | AI 子系统 | OpenCode v2 原生二进制（实机 2.0.26）+ HTTP/SSE | 适配器隔离 |
 | 公网 | Cloudflare Tunnel | 零入站端口 |
 | 部署 | systemd ×4（gateway / opencode / backup.service / backup.timer） | 见 §10 |
-| 测试 | `node --test`（内置） | `npm run verify` = typecheck + 64 项测试 |
+| 测试 | `node --test`（内置） | `npm run verify` = typecheck + 70 项测试 |
 
 ---
 

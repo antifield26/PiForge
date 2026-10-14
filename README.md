@@ -70,6 +70,8 @@ ssh antifield@169.254.77.10 'sudo node /opt/piforge/scripts/verify-fixes.mjs'
 | [AGENTS.md](AGENTS.md) | 开发/部署/安全守则 |
 | [docs/PERF.md](docs/PERF.md) | P2.6 性能与内存报告 |
 | [docs/WRITE-RELIEF.md](docs/WRITE-RELIEF.md) | P0.9 写入减负核验 |
+| [docs/PUBLIC-RECOVERY.md](docs/PUBLIC-RECOVERY.md) | 公网入口 530/1033 恢复手册 |
+| [docs/OPENCODE-UPGRADE.md](docs/OPENCODE-UPGRADE.md) | OpenCode 升级 Playbook |
 | [CHANGELOG.md](CHANGELOG.md) | 变更记录 |
 
 ## 安全

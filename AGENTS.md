@@ -70,7 +70,7 @@ npm install
 # 类型检查 / 构建（shared → gateway → web）
 npm run build
 
-# 全量验证：typecheck + node:test（64 项，含上传/版本/限速原子性/跨用户隔离/白名单/metrics 写入纪律/保留策略/SSE 上限/单实例锁）
+# 全量验证：typecheck + node:test（70 项，含上传/版本/限速原子性/跨用户隔离/白名单/metrics 写入纪律/保留策略/SSE 上限/单实例锁/写入归因/限制检测）
 npm run verify
 ```
 

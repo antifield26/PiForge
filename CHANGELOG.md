@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- 2026-10-14 路 **工作区整理与文档对齐**：测试数回写 **70**（ARCHITECTURE / AGENTS）；README 文档索引补 `PUBLIC-RECOVERY.md`、`OPENCODE-UPGRADE.md`；`deploy/sudoers.d-piforge` 的 `verify-deploy.mjs` 更正为 `verify-deploy.sh`；`.gitignore` 增加 `.mimocode/`；P4.A 标记 done。无删除业务脚本（`backup-record`/`verify-restore`/`verify-login`/`cf-*` 等均被 runbook 或备份链引用）。
+
 ### Added
 
 - 2026-10-14 路 **ADR-9 修订：antifield 保留管理员免密**（用户决定）：`antifield` 恢复 `NOPASSWD: ALL`（`/etc/sudoers.d/010_antifield-nopasswd`，模板 `deploy/sudoers.d-antifield-nopasswd`）；`deploy-pi.sh` 每次部署自动重装该 drop-in，防再被裁掉。`piforge` 仍为可选最小权限运维账号（`PIFORGE_OPS`）；`--demote-antifield` 降为应急锁死选项。实机 `sudo -n` 已恢复。

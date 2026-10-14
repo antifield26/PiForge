@@ -37,7 +37,7 @@ Cmnd_Alias PIFORGE_OPS = \
     /usr/local/bin/node /opt/piforge/scripts/verify-p3.mjs, \
     /usr/local/bin/node /opt/piforge/scripts/verify-p3-audit.mjs, \
     /usr/local/bin/node /opt/piforge/scripts/verify-p3-backup.mjs, \
-    /usr/local/bin/node /opt/piforge/scripts/verify-deploy.mjs, \
+    /usr/bin/bash /opt/piforge/scripts/verify-deploy.sh, \
     /usr/local/bin/node /opt/piforge/scripts/oc-contract.mjs, \
     /usr/local/bin/node /opt/piforge/scripts/gen-sudoers.mjs *, \
     /usr/sbin/visudo -c -f /etc/sudoers.d/piforge, \

@@ -1,4 +1,4 @@
-﻿# TASK-INDEX — 任务索引（唯一任务事实源）
+# TASK-INDEX — 任务索引（唯一任务事实源）
 
 > 规则：任务状态仅在本文件维护；完成任务后立即更新。状态：`pending` | `in-progress` | `done` | `blocked`。  
 > 每个任务可在一次工作会话内完成，且验收标准含**实机验证**。
@@ -155,7 +155,7 @@
 | P4.5 | 安全头红线抽查 | P4 | done | release-check 红线探测 `/api/v1/health` 的 CSP/nosniff/frame-options；红线 16/16 | release-check |
 | P4.6 | 前端轻量冒烟 | P4 | pending | 登录→面板切换→登出自动断言（verify 可选层） | apps/web |
 | P4.7 | 备份失败闭环再演 | P4 | pending | 模拟失败→告警→面板状态可读（联动 P3.7）；依赖实机 | backup/alerts |
-| P4.A | P4 综合出口验收 | P4 | blocked | 归因可解释；公网手册可用；门禁含供应链+安全头；verify + 实机 e2e 全绿。本地 70/70+16/16 已过，待实机 | 本系列 |
+| P4.A | P4 综合出口验收 | P4 | done | 归因可解释；公网手册可用；门禁含供应链+安全头；verify 70/70 + 红线 16/16 + 实机 e2e 39/39 | 本系列 |
 
 ---
 
