@@ -76,7 +76,8 @@ usermod -a -G gpio "$OPS_USER" 2>/dev/null || true
 # ---------------------------------------------------------------------------
 [[ -f "$TEMPLATE" ]] || die "missing template $TEMPLATE"
 # Fail if the template is not the dual-account one (guards against a stale NOPASSWD: ALL).
-if grep -qE 'NOPASSWD:[[:space:]]*ALL' "$TEMPLATE"; then
+# Only rule lines count: the header comments intentionally mention the forbidden form.
+if grep -vE '^[[:space:]]*#' "$TEMPLATE" | grep -qE 'NOPASSWD:[[:space:]]*ALL'; then
   die "$TEMPLATE grants NOPASSWD: ALL — refusing to install"
 fi
 if ! grep -q "^${OPS_USER} ALL=" "$TEMPLATE"; then
@@ -109,13 +110,14 @@ log "installed $SUDOERS (0440, visudo OK)"
 # ---------------------------------------------------------------------------
 # 3. Optional: demote antifield (high risk — only after piforge SSH is proven)
 # ---------------------------------------------------------------------------
-ANTIFIELD_SUDO=$(ls /etc/sudoers.d/*antifield* /etc/sudoers.d/010_antifield-nopasswd 2>/dev/null || true)
+ANTIFIELD_SUDO=$(ls /etc/sudoers.d/*antifield* 2>/dev/null | sort -u || true)
 if ((DEMOTE)); then
   if ! id -u "$OPS_USER" >/dev/null 2>&1; then
     die "refusing to demote antifield: $OPS_USER does not exist"
   fi
-  if ! sudo -n -l -U "$OPS_USER" 2>/dev/null | grep -q PIFORGE_OPS; then
-    die "refusing to demote antifield: $OPS_USER cannot see PIFORGE_OPS yet"
+  # `sudo -l` expands Cmnd_Alias, so never grep the alias name; probe a real runbook path.
+  if ! sudo -n -l -U "$OPS_USER" 2>/dev/null | grep -q '/opt/piforge/scripts/'; then
+    die "refusing to demote antifield: $OPS_USER cannot see PiForge runbooks yet"
   fi
   if [[ -z "$ANTIFIELD_SUDO" ]]; then
     log "no antifield sudoers file found — nothing to demote"

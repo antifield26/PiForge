@@ -31,15 +31,15 @@ Cmnd_Alias PIFORGE_OPS = \
     /usr/bin/bash /opt/piforge/scripts/rollback-pi.sh, \
     /opt/piforge/scripts/oc-snapshot.sh, \
     /usr/bin/bash /opt/piforge/scripts/oc-snapshot.sh, \
-    /usr/bin/node /opt/piforge/scripts/verify-e2e.mjs, \
-    /usr/bin/node /opt/piforge/scripts/verify-fixes.mjs, \
-    /usr/bin/node /opt/piforge/scripts/verify-login.mjs, \
-    /usr/bin/node /opt/piforge/scripts/verify-p3.mjs, \
-    /usr/bin/node /opt/piforge/scripts/verify-p3-audit.mjs, \
-    /usr/bin/node /opt/piforge/scripts/verify-p3-backup.mjs, \
-    /usr/bin/node /opt/piforge/scripts/verify-deploy.mjs, \
-    /usr/bin/node /opt/piforge/scripts/oc-contract.mjs, \
-    /usr/bin/node /opt/piforge/scripts/gen-sudoers.mjs *, \
+    /usr/local/bin/node /opt/piforge/scripts/verify-e2e.mjs, \
+    /usr/local/bin/node /opt/piforge/scripts/verify-fixes.mjs, \
+    /usr/local/bin/node /opt/piforge/scripts/verify-login.mjs, \
+    /usr/local/bin/node /opt/piforge/scripts/verify-p3.mjs, \
+    /usr/local/bin/node /opt/piforge/scripts/verify-p3-audit.mjs, \
+    /usr/local/bin/node /opt/piforge/scripts/verify-p3-backup.mjs, \
+    /usr/local/bin/node /opt/piforge/scripts/verify-deploy.mjs, \
+    /usr/local/bin/node /opt/piforge/scripts/oc-contract.mjs, \
+    /usr/local/bin/node /opt/piforge/scripts/gen-sudoers.mjs *, \
     /usr/sbin/visudo -c -f /etc/sudoers.d/piforge, \
     /usr/sbin/visudo -c -f /etc/sudoers.d/piforge-gw, \
     /usr/bin/systemctl status *.service, \

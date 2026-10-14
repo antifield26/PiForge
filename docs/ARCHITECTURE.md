@@ -313,4 +313,4 @@ GET    /api/v1/agent/events          # SSE（无名 data 帧 + 15s 心跳注释�
 | ADR-8 | 备份脚本失败即非零退出，不完整标记 `partial` | 杜绝"假绿"备份 |
 | ADR-9 | 运维双账号：新建 `piforge` 承担受限运维（部署/备份/改密），`antifield` 取消 `NOPASSWD: ALL` | 人类运维面与服务面分离；SSH 即 root 的爆炸半径下降；服务账号 `piforge-gw`/`piforge-oc` 不变 |
 
-> ADR-9 于 2026-10-13 拍板（用户指定双账号，运维用户命名 `piforge`），实现见 TASK-INDEX **FIX-4.9**。
+> ADR-9 **已落地（2026-10-14）**：`sudo -n -l -U piforge` 仅 PIFORGE_OPS（runbook + 白名单 systemctl）；`sudo -n true` 对 antifield 返回需密码。详见 TASK-INDEX FIX-4.9。
